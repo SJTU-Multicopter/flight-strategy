@@ -56,7 +56,7 @@ struct control
 	int mode;
 	bool pos_halt[3];
 	float pos_sp[3];
-	bool disabled;
+	bool enabled;
 };
 
 struct flight
@@ -71,9 +71,9 @@ struct robot
 	float yaw;
 };
 position pos;
-control ctrl;
-flight flight;
-robot robot;
+struct control ctrl={false, 0, {false,false,false},{0,0,0},false};
+struct flight flight={0,0,0};
+struct robot robot={{0,0},0};
 ros::Publisher rawpos_b_pub;
 ros::Publisher rawpos_f_pub;
 void navCallback(const ardrone_autonomy::Navdata &msg)
@@ -151,7 +151,6 @@ int main(int argc, char **argv)
 	ros::Subscriber drone_info_sub = n.subscribe("/ardrone/drone_info", 1, drone_info_Callback);
 	ros::Subscriber nav_sub = n.subscribe("/ardrone/navdata", 1, navCallback);
 
-
 	ros::Rate loop_rate(LOOP_RATE);
 	std_msgs::Empty order;
 	geometry_msgs::Twist cmd;
@@ -164,11 +163,12 @@ int main(int argc, char **argv)
 
 				}
 				flight.last_state = flight.state;
+				flight.state = STATE_TAKEOFF;
 				break;
 			}
 			case STATE_TAKEOFF:{
 				if(flight.last_state != flight.state){
-
+					takeoff_pub.publish(order);
 				}
 				flight.last_state = flight.state;
 				if(ctrl.flag_arrived){
@@ -179,11 +179,17 @@ int main(int argc, char **argv)
 			}
 			case STATE_LOCATING:{
 				if(flight.last_state != flight.state){
-					
+					flight_strategy::ctrl ctrl_msg;
+					ctrl_msg.pos_sp[0] = pos.pos_f(0);
+					ctrl_msg.pos_halt[0] = 0;
+					ctrl_msg.pos_halt[1] = 1;
+					ctrl_msg.pos_halt[2] = 1;
+					ctrl_msg.enabled = 1;
+					ctrl_pub.publish(ctrl_msg);
 				}
 				flight.last_state = flight.state;
 				
-				if(1){//self_located()){
+				if(0){//self_located()){
 					flight.state = STATE_STANDBY;
 				}
 				else if(1){//locating_timeout()){

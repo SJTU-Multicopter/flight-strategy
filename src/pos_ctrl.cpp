@@ -39,7 +39,7 @@ struct control
 	int mode;
 	bool pos_halt[3];
 	float pos_sp[3];
-	bool disabled;
+	bool enabled;
 };
 struct output
 {
