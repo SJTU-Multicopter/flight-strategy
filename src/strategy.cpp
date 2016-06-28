@@ -67,7 +67,7 @@ struct flight
 };
 struct robot
 {
-	float pos_f;
+    float pos_f[2];
 	float yaw;
 };
 position pos;
@@ -124,15 +124,15 @@ void odometryCallback(const nav_msgs::Odometry &msg)
 }
 void drone_info_Callback(const image_process::drone_info msg)
 {
-	pos.pos_f(0)=msg.pose.x;
-	pos.pos_f(0)=msg.pose.y;
-	pos.pos_f(0)=msg.pose.theta = yaw;
+    pos.pos_f(0)=msg.pose.x;
+    pos.pos_f(1)=msg.pose.y;
+    pos.yaw=msg.pose.theta;
 }
 void robot_info_Callback(const image_process::robot_info msg)
 {
-	robot.pos_f(0)=msg.pose.x;
-	robot.pos_f(0)=msg.pose.y;
-	robot.pos_f(0)=msg.pose.theta = yaw;
+    robot.pos_f[0]=msg.pose.x;
+    robot.pos_f[1]=msg.pose.y;
+    robot.yaw=msg.pose.theta;
 }
 int main(int argc, char **argv)
 {
