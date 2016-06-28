@@ -8,7 +8,8 @@
 #include "ardrone_autonomy/Navdata.h"
 #include "ardrone_control/ROI.h"
 #include <flight_strategy/ctrl.h>
-
+#include "image_process/robot_info.h"
+#include "image_process/drone_info.h"
 #define LOOP_RATE 20
 
 #define STATE_IDLE 0
@@ -64,9 +65,15 @@ struct flight
 	int last_state;
 	int drone_state;
 };
+struct robot
+{
+	float pos_f;
+	float yaw;
+};
 position pos;
 control ctrl;
 flight flight;
+robot robot;
 ros::Publisher rawpos_b_pub;
 ros::Publisher rawpos_f_pub;
 void navCallback(const ardrone_autonomy::Navdata &msg)
@@ -115,6 +122,18 @@ void odometryCallback(const nav_msgs::Odometry &msg)
 {
 	pos.pos_f(2) = msg.pose.pose.position.z;
 }
+void drone_info_Callback(const image_process::drone_info msg)
+{
+	pos.pos_f(0)=msg.pose.x;
+	pos.pos_f(0)=msg.pose.y;
+	pos.pos_f(0)=msg.pose.theta = yaw;
+}
+void robot_info_Callback(const image_process::robot_info msg)
+{
+	robot.pos_f(0)=msg.pose.x;
+	robot.pos_f(0)=msg.pose.y;
+	robot.pos_f(0)=msg.pose.theta = yaw;
+}
 int main(int argc, char **argv)
 {
 	
@@ -128,6 +147,11 @@ int main(int argc, char **argv)
 	rawpos_b_pub = n.advertise<geometry_msgs::PoseStamped>("/ardrone/rawpos_b", 1);
 	rawpos_f_pub = n.advertise<geometry_msgs::PoseStamped>("/ardrone/rawpos_f", 1);
 	ros::Publisher ctrl_pub = n.advertise<flight_strategy::ctrl>("ctrl", 1);
+	ros::Subscriber robot_info_sub = n.subscribe("/ardrone/robot_info", 1, robot_info_Callback);
+	ros::Subscriber drone_info_sub = n.subscribe("/ardrone/drone_info", 1, drone_info_Callback);
+	ros::Subscriber nav_sub = n.subscribe("/ardrone/navdata", 1, navCallback);
+
+
 	ros::Rate loop_rate(LOOP_RATE);
 	std_msgs::Empty order;
 	geometry_msgs::Twist cmd;
