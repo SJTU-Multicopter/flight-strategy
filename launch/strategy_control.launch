@@ -1,0 +1,8 @@
+<launch>
+  <!-- 0-none, 1-states, 2-commands, 3-control_sp, 4-control_ff -->
+  <param name="auxSend" value="3" type="int" />
+
+  <node pkg="flight_strategy" name="strategy" type="strategy" />
+  <node pkg="flight_strategy" name="pos_ctrl" type="pos_ctrl"/>
+
+</launch>

@@ -166,6 +166,7 @@ int main(int argc, char **argv)
 				flight.state = STATE_TAKEOFF;
 				break;
 			}
+			
 			case STATE_TAKEOFF:{
 				if(flight.last_state != flight.state){
 					takeoff_pub.publish(order);
@@ -184,7 +185,7 @@ int main(int argc, char **argv)
 					ctrl_msg.pos_halt[0] = 0;
 					ctrl_msg.pos_halt[1] = 1;
 					ctrl_msg.pos_halt[2] = 1;
-					ctrl_msg.enabled = 1;
+					ctrl_msg.enable = 1;
 					ctrl_pub.publish(ctrl_msg);
 				}
 				flight.last_state = flight.state;
