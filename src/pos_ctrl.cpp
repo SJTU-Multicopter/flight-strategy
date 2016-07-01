@@ -8,6 +8,7 @@
 #include "ardrone_autonomy/Navdata.h"
 #include "ardrone_control/ROI.h"
 #include <flight_strategy/ctrl.h>
+#include <flight_strategy/ctrlBack.h>
 
 #define LOOP_RATE 20
 using namespace std;
@@ -46,7 +47,7 @@ struct output
 	float vel_sp[3];
 };
 raw_state raw_state;
-struct control ctrl = {false, 0,{false,false,false},{0,0,0},false};
+struct control ctrl = {false, 0,{true,true,true},{0,0,0},false};
 struct output output = {{0,0,0}};
 void ctrl_sp_callback(const flight_strategy::ctrl msg)
 {
@@ -159,6 +160,7 @@ int main(int argc, char **argv)
 	ros::NodeHandle n;
 //	ros::Subscriber image_pos_sub = n.subscribe("/ROI", 1, imagepositionCallback);
 	ros::Publisher cmd_pub = n.advertise<geometry_msgs::Twist>("/cmd_vel", 1);
+	ros::Publisher ctrlBack_pub = n.advertise<flight_strategy::ctrlBack>("ctrlBack",1);
 	ros::Subscriber nav_sub = n.subscribe("/ardrone/navdata", 1, navCallback);
 	ros::Subscriber odometry_sub = n.subscribe("/ardrone/odometry", 1, odometryCallback);
 	ros::Subscriber rawpos_f_sub = n.subscribe("/ardrone/rawpos_f", 1, rawpos_f_Callback);
@@ -166,24 +168,32 @@ int main(int argc, char **argv)
 	ros::Subscriber ctrl_sub = n.subscribe("ctrl", 1, ctrl_sp_callback);
 	ros::Rate loop_rate(LOOP_RATE);
 	bool arrived;
+	flight_strategy::ctrlBack ctrlBack_msg;
 	while(ros::ok()){
 		for(int i=0;i<3;i++){//xyz axis
 			if(ctrl.pos_halt[i]){
 				output.vel_sp[i] = 0;
+				arrived = false;
 			}
 			else{
 				float vel_sp_1D;
 				arrived = inaccurate_control_1D(ctrl.pos_sp[i], raw_state.pos_f(i), &vel_sp_1D);
 				if(arrived){
 					output.vel_sp[i] = 0;
+					
+					
+					ctrlBack_msg.arrived[i] = 1;
+					
 				}
 				else{
+					ctrlBack_msg.arrived[i] = 0;
 					output.vel_sp[i] = vel_sp_1D;
 				}
 				
 			}
 
 		}
+		ctrlBack_pub.publish(ctrlBack_msg);
 		geometry_msgs::Twist cmd;
 		cmd.linear.x = output.vel_sp[0];
 		cmd.linear.y = output.vel_sp[1];

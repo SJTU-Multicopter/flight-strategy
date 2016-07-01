@@ -4,5 +4,5 @@
 
   <node pkg="flight_strategy" name="strategy" type="strategy" />
   <node pkg="flight_strategy" name="pos_ctrl" type="pos_ctrl"/>
-  <node pkg="flight_strategy" name="simcontroller" type="simcontroller" />
+
 </launch>

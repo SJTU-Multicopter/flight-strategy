@@ -8,6 +8,7 @@
 #include "ardrone_autonomy/Navdata.h"
 #include "ardrone_control/ROI.h"
 #include <flight_strategy/ctrl.h>
+#include <flight_strategy/ctrlBack.h>
 #include "image_process/robot_info.h"
 #include "image_process/drone_info.h"
 #define LOOP_RATE 20
@@ -134,6 +135,13 @@ void robot_info_Callback(const image_process::robot_info msg)
     robot.pos_f[1]=msg.pose.y;
     robot.yaw=msg.pose.theta;
 }
+void ctrlBack_Callback(const flight_strategy::ctrlBack msg)
+{
+	if(msg.arrived[0]&&msg.arrived[1]&&msg.arrived[2])
+		ctrl.flag_arrived = true;
+	else
+		ctrl.flag_arrived = false;
+}
 int main(int argc, char **argv)
 {
 	
@@ -147,6 +155,7 @@ int main(int argc, char **argv)
 	rawpos_b_pub = n.advertise<geometry_msgs::PoseStamped>("/ardrone/rawpos_b", 1);
 	rawpos_f_pub = n.advertise<geometry_msgs::PoseStamped>("/ardrone/rawpos_f", 1);
 	ros::Publisher ctrl_pub = n.advertise<flight_strategy::ctrl>("ctrl", 1);
+	ros::Subscriber ctrlBack_sub = n.subscribe("ctrlBack", 1, ctrlBack_Callback);
 	ros::Subscriber robot_info_sub = n.subscribe("/ardrone/robot_info", 1, robot_info_Callback);
 	ros::Subscriber drone_info_sub = n.subscribe("/ardrone/drone_info", 1, drone_info_Callback);
 	ros::Subscriber nav_sub = n.subscribe("/ardrone/navdata", 1, navCallback);
@@ -160,26 +169,38 @@ int main(int argc, char **argv)
 		switch(flight.state){
 			case STATE_IDLE:{
 				if(flight.last_state != flight.state){
-
+					ROS_INFO("State to IDLE\n");
 				}
 				flight.last_state = flight.state;
 				flight.state = STATE_TAKEOFF;
 				break;
 			}
-			
+
 			case STATE_TAKEOFF:{
+				
 				if(flight.last_state != flight.state){
+					ROS_INFO("State TAKEOFF\n");
 					takeoff_pub.publish(order);
+					// flight_strategy::ctrl ctrl_msg;
+					// ctrl_msg.pos_sp[0] = pos.pos_f(0);
+					// ctrl_msg.pos_halt[0] = 1;
+					// ctrl_msg.pos_halt[1] = 1;
+					// ctrl_msg.pos_halt[2] = 1;
+					// ctrl_msg.enable = 1;
+					// ctrl_pub.publish(ctrl_msg);
 				}
 				flight.last_state = flight.state;
-				if(ctrl.flag_arrived){
+
+				if(ctrl.flag_arrived && flight.drone_state != 6){
 					//fly to center
 					flight.state = STATE_LOCATING;
 				}
 				break;
 			}
 			case STATE_LOCATING:{
+				
 				if(flight.last_state != flight.state){
+					ROS_INFO("State LOCATING\n");
 					flight_strategy::ctrl ctrl_msg;
 					ctrl_msg.pos_sp[0] = pos.pos_f(0);
 					ctrl_msg.pos_halt[0] = 0;
@@ -190,17 +211,18 @@ int main(int argc, char **argv)
 				}
 				flight.last_state = flight.state;
 				
-				if(0){//self_located()){
+				if(ctrl.flag_arrived){//self_located()){
+					ctrl.flag_arrived = false;
 					flight.state = STATE_STANDBY;
 				}
-				else if(1){//locating_timeout()){
+				else if(0){//locating_timeout()){
 					//alt_adjust but still in locating state
 				}
 				break;
 			}
 			case STATE_STANDBY:{
 				if(flight.last_state != flight.state){
-					
+					ROS_INFO("State STANDBY\n");
 				}
 				flight.last_state = flight.state;
 				if(1){//locating_timeout()){
@@ -213,7 +235,7 @@ int main(int argc, char **argv)
 			}
 			case STATE_FLYING_TO_CATCH:{
 				if(flight.last_state != flight.state){
-					
+					ROS_INFO("State FLY_TO_CATCH\n");
 				}
 				flight.last_state = flight.state;
 				if(1){//robot_captured()){
@@ -224,7 +246,7 @@ int main(int argc, char **argv)
 			}
 			case STATE_REVOLVING:{
 				if(flight.last_state != flight.state){
-					
+					ROS_INFO("State REVOLVING\n");
 				}
 				flight.last_state = flight.state;
 				if(1){//robot_at_desired_angle()){
@@ -234,7 +256,7 @@ int main(int argc, char **argv)
 			}
 			case STATE_FLYING_AWAY:{
 				if(flight.last_state != flight.state){
-					
+					ROS_INFO("State FLYING_AWAY\n");
 				}
 				flight.last_state = flight.state;
 				if(1){//close_to_center()){
@@ -250,7 +272,7 @@ int main(int argc, char **argv)
 			}
 			case STATE_ON_GROUND:{
 				if(flight.last_state != flight.state){
-					
+					ROS_INFO("State ON_GROUND\n");
 				}
 				flight.last_state = flight.state;
 				break;
