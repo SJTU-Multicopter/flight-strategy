@@ -9,8 +9,12 @@
 #include "ardrone_control/ROI.h"
 #include <flight_strategy/ctrl.h>
 #include <flight_strategy/ctrlBack.h>
+#include "image_process/robot_info.h"
+#include "image_process/drone_info.h"
 
 #define LOOP_RATE 20
+#define IMG_TOL 10
+
 using namespace std;
 using namespace Eigen;
 int constrain(int a, int b, int c){return ((a)<(b)?(b):(a)>(c)?c:a);}
@@ -31,7 +35,8 @@ struct raw_state
 };
 struct image_state
 {
-	/* data */
+	Vector2f pos_b;
+	float yaw;
 };
 
 struct control
@@ -47,6 +52,7 @@ struct output
 	float vel_sp[3];
 };
 raw_state raw_state;
+image_state img_state;
 struct control ctrl = {false, 0,{true,true,true},{0,0,0},false};
 struct output output = {{0,0,0}};
 void ctrl_sp_callback(const flight_strategy::ctrl msg)
@@ -58,6 +64,7 @@ void ctrl_sp_callback(const flight_strategy::ctrl msg)
 		else
 			ctrl.pos_halt[i] = false;
 	}
+	ctrl.mode = msg.mode;
 }
 void odometryCallback(const nav_msgs::Odometry &msg)
 {
@@ -78,6 +85,12 @@ void rawpos_b_Callback(const geometry_msgs::PoseStamped &msg)
 void navCallback(const ardrone_autonomy::Navdata &msg)
 {
 
+}
+void drone_info_Callback(const image_process::drone_info msg)
+{
+    img_state.pos_b(0)=msg.pose.x;
+    img_state.pos_b(1)=msg.pose.y;
+    img_state.yaw=msg.pose.theta;
 }
 bool inaccurate_control_1D(float pos_sp, float pos, float *vel_sp)
 {
@@ -115,7 +128,7 @@ bool inaccurate_control_3D(const Vector3f& pos_sp, const Vector3f& pos, Vector3f
 	}
 	return is_arrived;
 }
-bool accurate_control(const Vector3f& image_pos, float pos_z, Vector3f& vel_sp)
+bool accurate_control(const Vector2f& image_pos, Vector2f& vel_sp)
 {
 	static Vector2f err_last;
 	static Vector2f err_int;
@@ -144,7 +157,7 @@ bool accurate_control(const Vector3f& image_pos, float pos_z, Vector3f& vel_sp)
 	
 	bool is_arrived;
 	float dist = err.norm();
-	if(dist > 30.0){
+	if(dist > IMG_TOL){
 		is_arrived = false;
 	}
 	else{
@@ -166,32 +179,52 @@ int main(int argc, char **argv)
 	ros::Subscriber rawpos_f_sub = n.subscribe("/ardrone/rawpos_f", 1, rawpos_f_Callback);
 	ros::Subscriber rawpos_b_sub = n.subscribe("/ardrone/rawpos_b", 1, rawpos_b_Callback);
 	ros::Subscriber ctrl_sub = n.subscribe("ctrl", 1, ctrl_sp_callback);
+	ros::Subscriber drone_info_sub = n.subscribe("/ardrone/position_reset_info", 1, drone_info_Callback);
 	ros::Rate loop_rate(LOOP_RATE);
 	bool arrived;
 	flight_strategy::ctrlBack ctrlBack_msg;
 	while(ros::ok()){
-		for(int i=0;i<3;i++){//xyz axis
-			if(ctrl.pos_halt[i]){
-				output.vel_sp[i] = 0;
-				arrived = false;
-			}
-			else{
-				float vel_sp_1D;
-				arrived = inaccurate_control_1D(ctrl.pos_sp[i], raw_state.pos_f(i), &vel_sp_1D);
-				if(arrived){
+		if(ctrl.mode == 0){
+			for(int i=0;i<3;i++){//xyz axis
+				if(ctrl.pos_halt[i]){
 					output.vel_sp[i] = 0;
-					
-					
-					ctrlBack_msg.arrived[i] = 1;
-					
+					arrived = false;
 				}
 				else{
-					ctrlBack_msg.arrived[i] = 0;
-					output.vel_sp[i] = vel_sp_1D;
+					float vel_sp_1D;
+					arrived = inaccurate_control_1D(ctrl.pos_sp[i], raw_state.pos_f(i), &vel_sp_1D);
+					if(arrived){
+						output.vel_sp[i] = 0;
+						
+						
+						ctrlBack_msg.arrived[i] = 1;
+						
+					}
+					else{
+						ctrlBack_msg.arrived[i] = 0;
+						output.vel_sp[i] = vel_sp_1D;
+					}
 				}
-				
 			}
+		}
+		else if(ctrl.mode == 1){
+			Vector2f vel_sp;
+			arrived = accurate_control(img_state.pos_b, vel_sp);
 
+			if(arrived){
+				ctrlBack_msg.arrived[0] = 1;
+				ctrlBack_msg.arrived[1] = 1;
+				output.vel_sp[0] = 0;
+				output.vel_sp[1] = 0;
+				output.vel_sp[2] = 0;
+			}
+			else{
+				ctrlBack_msg.arrived[0] = 0;
+				ctrlBack_msg.arrived[1] = 0;
+				output.vel_sp[0] = vel_sp(0);
+				output.vel_sp[1] = vel_sp(1);
+				output.vel_sp[2] = 0;
+			}
 		}
 		ctrlBack_pub.publish(ctrlBack_msg);
 		geometry_msgs::Twist cmd;

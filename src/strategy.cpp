@@ -26,7 +26,7 @@
 
 using namespace std;
 using namespace Eigen;
-
+float absolute_f(float a){return (a>0?a:-a);}
 class position
 {
 public:
@@ -36,8 +36,10 @@ public:
 	Vector3f pos_f;
 	Vector3f vel_b;
 	Vector3f vel_f;
+	Vector2f pos_img;
 	float yaw;
 	void get_R_field_body(float yaw);
+	bool self_located(void);
 };
 void position::get_R_field_body(float yaw)
 {
@@ -50,6 +52,14 @@ void position::get_R_field_body(float yaw)
 	R_field_body(2,0) = 0;
 	R_field_body(2,1) = 0;
 	R_field_body(2,2) = 1;
+}
+bool position::self_located(void)
+{
+	if (absolute_f(pos_img(0) - 320)< 300){
+		if(absolute_f(pos_img(1) - 180)<160)
+			return true;
+	}
+	return false;
 }
 struct control
 {
@@ -125,8 +135,8 @@ void odometryCallback(const nav_msgs::Odometry &msg)
 }
 void drone_info_Callback(const image_process::drone_info msg)
 {
-    pos.pos_f(0)=msg.pose.x;
-    pos.pos_f(1)=msg.pose.y;
+    pos.pos_img(0)=msg.pose.x;
+    pos.pos_img(1)=msg.pose.y;
     pos.yaw=msg.pose.theta;
 }
 void robot_info_Callback(const image_process::robot_info msg)
@@ -157,7 +167,7 @@ int main(int argc, char **argv)
 	ros::Publisher ctrl_pub = n.advertise<flight_strategy::ctrl>("ctrl", 1);
 	ros::Subscriber ctrlBack_sub = n.subscribe("ctrlBack", 1, ctrlBack_Callback);
 	ros::Subscriber robot_info_sub = n.subscribe("/ardrone/robot_info", 1, robot_info_Callback);
-	ros::Subscriber drone_info_sub = n.subscribe("/ardrone/drone_info", 1, drone_info_Callback);
+	ros::Subscriber drone_info_sub = n.subscribe("/ardrone/position_reset_info", 1, drone_info_Callback);
 	ros::Subscriber nav_sub = n.subscribe("/ardrone/navdata", 1, navCallback);
 
 	ros::Rate loop_rate(LOOP_RATE);
@@ -165,7 +175,6 @@ int main(int argc, char **argv)
 	geometry_msgs::Twist cmd;
 	while(ros::ok())
 	{
-		
 		switch(flight.state){
 			case STATE_IDLE:{
 				if(flight.last_state != flight.state){
@@ -175,9 +184,7 @@ int main(int argc, char **argv)
 				flight.state = STATE_TAKEOFF;
 				break;
 			}
-
 			case STATE_TAKEOFF:{
-				
 				if(flight.last_state != flight.state){
 					ROS_INFO("State TAKEOFF\n");
 					takeoff_pub.publish(order);
@@ -190,45 +197,62 @@ int main(int argc, char **argv)
 					// ctrl_pub.publish(ctrl_msg);
 				}
 				flight.last_state = flight.state;
-
-				if(ctrl.flag_arrived && flight.drone_state != 6){
+				if(flight.drone_state != 6){
 					//fly to center
 					flight.state = STATE_LOCATING;
 				}
 				break;
 			}
 			case STATE_LOCATING:{
-				
+				static unsigned int loop_times = 0;
+				flight_strategy::ctrl ctrl_msg;
 				if(flight.last_state != flight.state){
 					ROS_INFO("State LOCATING\n");
-					flight_strategy::ctrl ctrl_msg;
-					ctrl_msg.pos_sp[0] = pos.pos_f(0);
-					ctrl_msg.pos_halt[0] = 0;
+					
+					ctrl_msg.pos_sp[2] = pos.pos_f(2)+0.5;
+					ctrl_msg.pos_halt[0] = 1;
 					ctrl_msg.pos_halt[1] = 1;
-					ctrl_msg.pos_halt[2] = 1;
+					ctrl_msg.pos_halt[2] = 0;
 					ctrl_msg.enable = 1;
+					ctrl_msg.mode = 0;
 					ctrl_pub.publish(ctrl_msg);
 				}
 				flight.last_state = flight.state;
-				
-				if(ctrl.flag_arrived){//self_located()){
+				loop_times++;
+				if(pos.self_located()){
 					ctrl.flag_arrived = false;
+					loop_times = 0;
 					flight.state = STATE_STANDBY;
 				}
-				else if(0){//locating_timeout()){
-					//alt_adjust but still in locating state
+				else if(loop_times > 100){
+					ctrl_msg.pos_sp[2] = pos.pos_f(2)+0.5;
+					ctrl_msg.pos_halt[0] = 1;
+					ctrl_msg.pos_halt[1] = 1;
+					ctrl_msg.pos_halt[2] = 0;
+					ctrl_msg.enable = 1;
+					ctrl_msg.mode = 0;
+					ctrl_pub.publish(ctrl_msg);
+					loop_times = 0;
 				}
 				break;
 			}
 			case STATE_STANDBY:{
+				flight_strategy::ctrl ctrl_msg;
 				if(flight.last_state != flight.state){
 					ROS_INFO("State STANDBY\n");
+					ctrl_msg.mode = 1;
+					ctrl_msg.enable = 1;
+					ctrl_msg.pos_halt[0] = 0;
+					ctrl_msg.pos_halt[1] = 0;
+					ctrl_msg.pos_halt[2] = 0;
+					ctrl_pub.publish(ctrl_msg);
 				}
 				flight.last_state = flight.state;
 				if(1){//locating_timeout()){
-					flight.state = STATE_LOCATING;
+					
+				//	flight.state = STATE_LOCATING;
 				}
-				else if(1){//robot_coming()){
+				else if(0){//robot_coming()){
 					flight.state = STATE_FLYING_TO_CATCH;
 				}
 				break;
