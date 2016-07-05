@@ -4,9 +4,10 @@
 #include "geometry_msgs/PoseStamped.h"
 #include "nav_msgs/Odometry.h"
 #include "std_msgs/Empty.h"
+#include "std_msgs/Float32.h"
 #include "Eigen/Dense"
 #include "ardrone_autonomy/Navdata.h"
-#include "ardrone_control/ROI.h"
+#include "ardrone_autonomy/navdata_altitude.h"
 #include <flight_strategy/ctrl.h>
 #include <flight_strategy/ctrlBack.h>
 #include "image_process/robot_info.h"
@@ -23,10 +24,11 @@
 #define STATE_FLYING_AWAY 7
 #define STATE_ON_GROUND 8
 
+#define NORMAL_CTL 0
+#define IMAGE_CTL 1
 
 using namespace std;
 using namespace Eigen;
-float absolute_f(float a){return (a>0?a:-a);}
 class position
 {
 public:
@@ -36,11 +38,12 @@ public:
 	Vector3f pos_f;
 	Vector3f vel_b;
 	Vector3f vel_f;
-	Vector2f pos_img;
+	Vector2f pos_img;	//position of the blue circle
 	float yaw;
 	void get_R_field_body(float yaw);
 	bool self_located(void);
 };
+
 void position::get_R_field_body(float yaw)
 {
 	R_field_body(0,0) = cos(yaw);
@@ -53,14 +56,16 @@ void position::get_R_field_body(float yaw)
 	R_field_body(2,1) = 0;
 	R_field_body(2,2) = 1;
 }
+
 bool position::self_located(void)
 {
-	if (absolute_f(pos_img(0) - 320)< 300){
-		if(absolute_f(pos_img(1) - 180)<160)
+	if (fabs(pos_img(0) - 320)< 300){
+		if(fabs(pos_img(1) - 180)<160)
 			return true;
 	}
 	return false;
 }
+
 struct control
 {
 	bool flag_arrived;
@@ -76,17 +81,24 @@ struct flight
 	int last_state;
 	int drone_state;
 };
+
 struct robot
 {
     float pos_f[2];
-	float yaw;
+    float pos_b[2];
+	float yaw_body;
+	float yaw_field;
+	bool whole;
 };
+
 position pos;
 struct control ctrl={false, 0, {false,false,false},{0,0,0},false};
-struct flight flight={0,0,0};
-struct robot robot={{0,0},0};
+struct flight flight={6,0,0};
+struct robot robot={{0,0},{0,0},0,0,false};
+float altitude_sp;
 ros::Publisher rawpos_b_pub;
 ros::Publisher rawpos_f_pub;
+
 void navCallback(const ardrone_autonomy::Navdata &msg)
 {
 	geometry_msgs::PoseStamped rawpos_b;
@@ -101,11 +113,7 @@ void navCallback(const ardrone_autonomy::Navdata &msg)
 	float dt = (msg.tm - last_time)/1000000.0;
 	last_time = msg.tm;
 	pos.pos_b += raw_v * dt / 1000.0;
-
-	pos.yaw = (msg.rotZ) / 57.3;
 	pos.get_R_field_body(pos.yaw);
-//	first_yaw_received = true;
-
 	pos.pos_f = pos.R_field_body * pos.pos_b;
 
 	rawpos_b.pose.position.x = pos.pos_b(0);
@@ -129,22 +137,40 @@ void navCallback(const ardrone_autonomy::Navdata &msg)
 	// 9: Looping (?)
 	flight.drone_state = msg.state;
 }
+
 void odometryCallback(const nav_msgs::Odometry &msg)
 {
-	pos.pos_f(2) = msg.pose.pose.position.z;
+	
 }
+
+//altitude of sonar
+void altitudeCallback(const ardrone_autonomy::navdata_altitude &msg)
+{
+	pos.pos_f(2) = msg.altitude_vision/1000.0;
+}
+
+//yaw corresponding to the field
+void yawCallback(const std_msgs::Float32 &msg)
+{
+	pos.yaw = msg.data;
+}
+
+//circle position
 void drone_info_Callback(const image_process::drone_info msg)
 {
-    pos.pos_img(0)=msg.pose.x;
-    pos.pos_img(1)=msg.pose.y;
-    pos.yaw=msg.pose.theta;
+    pos.pos_img(0) = msg.pose.x;
+    pos.pos_img(1) = msg.pose.y;
 }
+
 void robot_info_Callback(const image_process::robot_info msg)
 {
-    robot.pos_f[0]=msg.pose.x;
-    robot.pos_f[1]=msg.pose.y;
-    robot.yaw=msg.pose.theta;
+    robot.pos_b[0] = msg.pose.x;
+    robot.pos_b[1] = msg.pose.y;
+    robot.yaw_body = msg.pose.theta;
+    robot.yaw_field = robot.yaw_body + pos.yaw;
+    robot.whole = msg.whole;
 }
+
 void ctrlBack_Callback(const flight_strategy::ctrlBack msg)
 {
 	if(msg.arrived[0]&&msg.arrived[1]&&msg.arrived[2])
@@ -152,12 +178,12 @@ void ctrlBack_Callback(const flight_strategy::ctrlBack msg)
 	else
 		ctrl.flag_arrived = false;
 }
+
 int main(int argc, char **argv)
 {
 	
 	ros::init(argc, argv, "pingpong");
 	ros::NodeHandle n;
-//	ros::Subscriber image_pos_sub = n.subscribe("/ROI", 1, imagepositionCallback);
 	ros::Publisher cmd_pub = n.advertise<geometry_msgs::Twist>("/cmd_vel", 1);
 	ros::Publisher takeoff_pub = n.advertise<std_msgs::Empty>("/ardrone/takeoff", 1);
 	ros::Publisher land_pub = n.advertise<std_msgs::Empty>("/ardrone/land", 1);
@@ -169,6 +195,8 @@ int main(int argc, char **argv)
 	ros::Subscriber robot_info_sub = n.subscribe("/ardrone/robot_info", 1, robot_info_Callback);
 	ros::Subscriber drone_info_sub = n.subscribe("/ardrone/position_reset_info", 1, drone_info_Callback);
 	ros::Subscriber nav_sub = n.subscribe("/ardrone/navdata", 1, navCallback);
+	ros::Subscriber altitude_sub = n.subscribe("/ardrone/navdata_altitude", 1, altitudeCallback);
+	ros::Subscriber yaw_sub = n.subscribe("/ardrone/yaw", 1, yawCallback);
 
 	ros::Rate loop_rate(LOOP_RATE);
 	std_msgs::Empty order;
@@ -188,13 +216,6 @@ int main(int argc, char **argv)
 				if(flight.last_state != flight.state){
 					ROS_INFO("State TAKEOFF\n");
 					takeoff_pub.publish(order);
-					// flight_strategy::ctrl ctrl_msg;
-					// ctrl_msg.pos_sp[0] = pos.pos_f(0);
-					// ctrl_msg.pos_halt[0] = 1;
-					// ctrl_msg.pos_halt[1] = 1;
-					// ctrl_msg.pos_halt[2] = 1;
-					// ctrl_msg.enable = 1;
-					// ctrl_pub.publish(ctrl_msg);
 				}
 				flight.last_state = flight.state;
 				if(flight.drone_state != 6){
@@ -273,8 +294,22 @@ int main(int argc, char **argv)
 					ROS_INFO("State REVOLVING\n");
 				}
 				flight.last_state = flight.state;
-				if(1){//robot_at_desired_angle()){
-					flight.state = STATE_FLYING_AWAY;
+
+				flight_strategy::ctrl ctrl_msg;
+
+				ctrl_msg.enable = 1;
+				ctrl_msg.mode = IMAGE_CTL;
+				ctrl_msg.pos_sp[0] = robot.pos_b[0];
+				ctrl_msg.pos_sp[1] = robot.pos_b[1];
+				ctrl_msg.pos_halt[0] = 0;
+				ctrl_msg.pos_halt[1] = 0;
+				ctrl_msg.pos_halt[2] = 1;
+				ctrl_pub.publish(ctrl_msg);
+				if(robot.whole){
+					//robot_at_desired_angle
+					if(fabs(robot.yaw_field) > 0 && fabs(robot.yaw_field) < 10){
+						flight.state = STATE_FLYING_AWAY;
+					}
 				}
 				break;
 			}
@@ -283,14 +318,18 @@ int main(int argc, char **argv)
 					ROS_INFO("State FLYING_AWAY\n");
 				}
 				flight.last_state = flight.state;
-				if(1){//close_to_center()){
-					//fly across center to a further pos
-				}
-				else{
-					//fly to center
-				}
-				if(ctrl.flag_arrived){
 
+				flight_strategy::ctrl ctrl_msg;
+				ctrl_msg.enable = 1;
+				ctrl_msg.mode = NORMAL_CTL;
+				ctrl_msg.pos_sp[2] = 2.0;
+				ctrl_msg.pos_halt[0] = 1;
+				ctrl_msg.pos_halt[1] = 1;
+				ctrl_msg.pos_halt[2] = 0;
+				ctrl_pub.publish(ctrl_msg);
+				
+				if(ctrl.flag_arrived){
+					flight.state = STATE_LOCATING;
 				}
 				break;
 			}

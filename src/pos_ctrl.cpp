@@ -13,7 +13,7 @@
 #include "image_process/drone_info.h"
 
 #define LOOP_RATE 20
-#define IMG_TOL 10
+#define IMG_TOL 25
 
 using namespace std;
 using namespace Eigen;
@@ -23,8 +23,6 @@ float constrain_f(float a, float b, float c){return ((a)<(b)?(b):(a)>(c)?c:a);}
 float dead_zone_f(float a, float b){return ((a)>(b)?(a):(a)<(-b)?(a):0);}
 int minimum(int a, int b){return (a>b?b:a);}
 int maximum(int a, int b){return (a>b?a:b);}
-int absolute(int a){return (a>0?a:-a);}
-float absolute_f(float a){return (a>0?a:-a);}
 struct raw_state
 {
 	Vector3f pos_b;
@@ -33,6 +31,7 @@ struct raw_state
 	Vector3f vel_f;
 	float yaw;
 };
+
 struct image_state
 {
 	Vector2f pos_b;
@@ -47,14 +46,17 @@ struct control
 	float pos_sp[3];
 	bool enabled;
 };
+
 struct output
 {
 	float vel_sp[3];
 };
+
 raw_state raw_state;
 image_state img_state;
 struct control ctrl = {false, 0,{true,true,true},{0,0,0},false};
 struct output output = {{0,0,0}};
+
 void ctrl_sp_callback(const flight_strategy::ctrl msg)
 {
 	for(int i=0;i<3;i++){
@@ -65,50 +67,58 @@ void ctrl_sp_callback(const flight_strategy::ctrl msg)
 			ctrl.pos_halt[i] = false;
 	}
 	ctrl.mode = msg.mode;
+	if(ctrl.mode == 1){
+		img_state.pos_b(0) = msg.pos_sp[0];
+		img_state.pos_b(1) = msg.pos_sp[1];
+	}
 }
+
 void odometryCallback(const nav_msgs::Odometry &msg)
 {
-//	pos_w(2) = msg.pose.pose.position.z;
+ 
 }
+
 void rawpos_f_Callback(const geometry_msgs::PoseStamped &msg)
 {
 	raw_state.pos_f(0)=msg.pose.position.x;
 	raw_state.pos_f(1)=msg.pose.position.y;
 	raw_state.pos_f(2)=msg.pose.position.z;
 }
+
 void rawpos_b_Callback(const geometry_msgs::PoseStamped &msg)
 {
 	raw_state.pos_b(0)=msg.pose.position.x;
 	raw_state.pos_b(1)=msg.pose.position.y;
 	raw_state.pos_b(2)=msg.pose.position.z;
 }
+
 void navCallback(const ardrone_autonomy::Navdata &msg)
 {
 
 }
+
 void drone_info_Callback(const image_process::drone_info msg)
 {
-    img_state.pos_b(0)=msg.pose.x;
-    img_state.pos_b(1)=msg.pose.y;
-    img_state.yaw=msg.pose.theta;
+
 }
-bool inaccurate_control_1D(float pos_sp, float pos, float *vel_sp)
+
+bool inaccurate_control_1D(float pos_sp, float pos, float &vel_sp)
 {
-	float speed = 0.7;
+	float speed = 0.1;
 	bool is_arrived;
 	float err = pos_sp - pos;
-	float dist = absolute_f(err);
-	if(dist > 0.15){
+	float dist = fabs(err);
+	if(dist > 0.3){
 		float direction = err / dist;
-		*vel_sp = direction * speed;
+		vel_sp = direction * speed;
 		is_arrived = false;
-	//	ROS_INFO("\npos(%f, %f)\nsetpt(%f, %f)\nvelsp(%f, %f)\n",_pos(0),_pos(1),_pos_sp(0),_pos_sp(1),vel_sp(0),vel_sp(1));
 	}
 	else{
 		is_arrived = true;
 	}
 	return is_arrived;
 }
+
 bool inaccurate_control_3D(const Vector3f& pos_sp, const Vector3f& pos, Vector3f& vel_sp)
 {
 	float speed = 0.1;
@@ -128,12 +138,13 @@ bool inaccurate_control_3D(const Vector3f& pos_sp, const Vector3f& pos, Vector3f
 	}
 	return is_arrived;
 }
+
 bool accurate_control(const Vector2f& image_pos, Vector2f& vel_sp)
 {
 	static Vector2f err_last;
 	static Vector2f err_int;
 	static bool new_start = true;
-	float P_pos = 0.0001, D_pos = 0.00005, I_pos = 0;
+	float P_pos = 0.00015, D_pos = 0.00007, I_pos = 0.00001;
 	Vector2f vel_sp_2d;
 	Vector2f image_center(320.0,180.0);
 	Vector2f image_pos_2d;
@@ -167,6 +178,7 @@ bool accurate_control(const Vector2f& image_pos, Vector2f& vel_sp)
 	err_int += err / LOOP_RATE;
 	return is_arrived;
 }
+
 int main(int argc, char **argv)
 {
 	ros::init(argc, argv, "position_controler");
@@ -185,20 +197,17 @@ int main(int argc, char **argv)
 	flight_strategy::ctrlBack ctrlBack_msg;
 	while(ros::ok()){
 		if(ctrl.mode == 0){
-			for(int i=0;i<3;i++){//xyz axis
+			for(int i = 0 ; i < 3 ; i++){//xyz axis
 				if(ctrl.pos_halt[i]){
 					output.vel_sp[i] = 0;
 					arrived = false;
 				}
 				else{
 					float vel_sp_1D;
-					arrived = inaccurate_control_1D(ctrl.pos_sp[i], raw_state.pos_f(i), &vel_sp_1D);
+					arrived = inaccurate_control_1D(ctrl.pos_sp[i], raw_state.pos_f(i), vel_sp_1D);
 					if(arrived){
 						output.vel_sp[i] = 0;
-						
-						
 						ctrlBack_msg.arrived[i] = 1;
-						
 					}
 					else{
 						ctrlBack_msg.arrived[i] = 0;
