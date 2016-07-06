@@ -4,6 +4,7 @@
 #include "geometry_msgs/PoseStamped.h"
 #include "nav_msgs/Odometry.h"
 #include "std_msgs/Empty.h"
+#include "std_msgs/Float32.h"
 #include "Eigen/Dense"
 #include "ardrone_autonomy/Navdata.h"
 #include "ardrone_control/ROI.h"
@@ -72,7 +73,10 @@ void ctrl_sp_callback(const flight_strategy::ctrl msg)
 		img_state.pos_b(1) = msg.pos_sp[1];
 	}
 }
-
+void yawCallback(const std_msgs::Float32 &msg)
+{
+	img_state.yaw = msg.data/57.3;
+}
 void odometryCallback(const nav_msgs::Odometry &msg)
 {
  
@@ -94,7 +98,7 @@ void rawpos_b_Callback(const geometry_msgs::PoseStamped &msg)
 
 void navCallback(const ardrone_autonomy::Navdata &msg)
 {
-
+	//img_state.yaw = msg.rotZ/57.3;
 }
 
 void drone_info_Callback(const image_process::drone_info msg)
@@ -212,21 +216,26 @@ int main(int argc, char **argv)
 	ros::Subscriber rawpos_b_sub = n.subscribe("/ardrone/rawpos_b", 1, rawpos_b_Callback);
 	ros::Subscriber ctrl_sub = n.subscribe("ctrl", 1, ctrl_sp_callback);
 	ros::Subscriber drone_info_sub = n.subscribe("/ardrone/position_reset_info", 1, drone_info_Callback);
+	ros::Subscriber yaw_sub = n.subscribe("/ardrone/yaw", 1, yawCallback);
 	ros::Rate loop_rate(LOOP_RATE);
 	bool arrived, alt_arrived;
 	flight_strategy::ctrlBack ctrlBack_msg;
+	for(int i = 0; i < 3; i++)
+		ctrlBack_msg.arrived[i] = 0;
 	while(ros::ok()){
 		if(ctrl.mode == 0){
 			if(ctrl.pos_halt[0] || ctrl.pos_halt[1])
 			{
-				output.vel_sp[0] = 0;
-				output.vel_sp[1] = 0;
+				output.vel_sp(0) = 0;
+				output.vel_sp(1) = 0;
 				ctrlBack_msg.arrived[0] = 1;
 				ctrlBack_msg.arrived[1] = 1;
 			}else{
-				Vector2f vel_sp;
-				arrived = inaccurate_control_2D(ctrl.pos_sp, raw_state.pos_f, vel_sp);
+				Vector2f vel_sp_f;
+				arrived = inaccurate_control_2D(ctrl.pos_sp, raw_state.pos_f, vel_sp_f);
+				ROS_INFO("\npos:%f,%f\nsp:%f,%f\nvel:%f,%f",raw_state.pos_f(0),raw_state.pos_f(1),ctrl.pos_sp(0),ctrl.pos_sp(1),vel_sp_f(0),vel_sp_f(1));
 				if(arrived){
+					ROS_INFO("arrived(node ctrl)");
 					ctrlBack_msg.arrived[0] = 1;
 					ctrlBack_msg.arrived[1] = 1;
 					output.vel_sp(0) = 0;
@@ -235,14 +244,28 @@ int main(int argc, char **argv)
 				else{
 					ctrlBack_msg.arrived[0] = 0;
 					ctrlBack_msg.arrived[1] = 0;
-					output.vel_sp(0) = vel_sp(0);
-					output.vel_sp(1) = vel_sp(1);
+				//	output.vel_sp(0) = vel_sp(0);
+				//	output.vel_sp(1) = vel_sp(1);
+					Matrix<float, 2, 2> Rf;
+					Rf(0,0) = cos(img_state.yaw);
+					Rf(0,1) = sin(-img_state.yaw);
+				//	Rf(0,2) = 0;
+					Rf(1,0) = sin(img_state.yaw);
+					Rf(1,1) = cos(img_state.yaw);
+				//	Rf(1,2) = 0;
+				//	Rf(2,0) = 0;
+				//	Rf(2,1) = 0;
+				//	Rf(2,2) = 1;
+					Vector2f vel_sp_b_2D = Rf.transpose()*vel_sp_f;
+					output.vel_sp(0) = vel_sp_b_2D(0);
+					output.vel_sp(1) = vel_sp_b_2D(1);
+					ROS_INFO("\nvelsp_body:%f,%f",vel_sp_b_2D(0),vel_sp_b_2D(1));
 				}
 			}	
 			//z
 			if(ctrl.pos_halt[2])
 			{
-				output.vel_sp[2] = 0;
+				output.vel_sp(2) = 0;
 				ctrlBack_msg.arrived[2] = 1;
 			}else
 			{
