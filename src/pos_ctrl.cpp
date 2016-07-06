@@ -57,6 +57,8 @@ raw_state raw_state;
 image_state img_state;
 control ctrl;// = {false, 0,{true,true,true},{0,0,0},false};
 output output;// = {{0,0,0}};
+int time_count = 0;
+bool image_ctl_flag = false;
 
 void ctrl_sp_callback(const flight_strategy::ctrl msg)
 {
@@ -124,7 +126,7 @@ bool inaccurate_control_1D(float pos_sp, float pos, float &vel_sp)
 }
 bool inaccurate_control_2D(const Vector3f& pos_sp, const Vector3f& pos, Vector2f& vel_sp)
 {
-	float speed = 0.1;
+	float speed = 0.15;
 	bool is_arrived;
 	Vector3f err3 = pos_sp - pos;
 	err3(2) = 0;
@@ -132,7 +134,7 @@ bool inaccurate_control_2D(const Vector3f& pos_sp, const Vector3f& pos, Vector2f
 	err(0) = err3(0);
 	err(1) = err3(1);
 	float dist = err.norm();
-	if(dist > 0.3){
+	if(dist > 0.2){
 		Vector2f direction = err / dist;
 		vel_sp = direction * speed;
 
@@ -201,6 +203,26 @@ bool accurate_control(const Vector2f& image_pos, Vector2f& vel_sp)
 	err_last = err;
 	err_int += err / LOOP_RATE;
 	return is_arrived;
+}
+
+bool image_control(const Vector2f& image_pos, Vector2f& vel_sp, float& distance)
+{
+	bool is_arrived;
+	Vector2f image_center(320.0,180.0);
+	Vector2f image_pos_2d;
+	image_pos_2d(0) = image_pos(0);
+	image_pos_2d(1) = image_pos(1);
+	Vector2f err = image_pos_2d - image_center;
+	float dist = err.norm();
+	distance = dist;
+	vel_sp(0) = -err(0) / dist;
+	vel_sp(1) = -err(1) / dist;
+	if(dist > IMG_TOL){
+		is_arrived = false;
+	}
+	else{
+		is_arrived = true;
+	}
 }
 
 int main(int argc, char **argv)
@@ -283,8 +305,11 @@ int main(int argc, char **argv)
 			}		
 		}
 		else if(ctrl.mode == 1){
+			Vector2f vel_sp_direction;
 			Vector2f vel_sp;
-			arrived = accurate_control(img_state.pos_b, vel_sp);
+			int pulse_length = 0;
+			float distance;
+			arrived = image_control(img_state.pos_b, vel_sp_direction, distance);
 
 			if(arrived){
 				ctrlBack_msg.arrived[0] = 1;
@@ -294,6 +319,23 @@ int main(int argc, char **argv)
 				output.vel_sp(2) = 0;
 			}
 			else{
+				vel_sp(0) = 0;
+				vel_sp(1) = 0;
+				time_count++;
+				if(!image_ctl_flag){
+					pulse_length = distance / 36 + 1;
+					image_ctl_flag = true;
+				}else{
+					if(time_count > pulse_length){
+						time_count = 0;
+						vel_sp(0) = 0;
+						vel_sp(1) = 0;
+						image_ctl_flag = false;
+					}else{
+						vel_sp = 0.4 * vel_sp_direction;
+					}
+				}
+
 				ctrlBack_msg.arrived[0] = 0;
 				ctrlBack_msg.arrived[1] = 0;
 				output.vel_sp(0) = vel_sp(0);
