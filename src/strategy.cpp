@@ -100,6 +100,7 @@ ros::Publisher rawpos_b_pub;
 ros::Publisher rawpos_f_pub;
 ros::Time position_reset_stamp;
 ros::Time robot_stamp;
+Vector2f pos_update;
 
 void navCallback(const ardrone_autonomy::Navdata &msg)
 {
@@ -162,6 +163,7 @@ void position_reset_info_Callback(const image_process::drone_info msg)
 {
     pos.pos_img(0) = msg.pose.x;
     pos.pos_img(1) = msg.pose.y;
+    position_reset_stamp = ros::Time::now();
 }
 
 void robot_info_Callback(const image_process::robot_info msg)
@@ -171,6 +173,7 @@ void robot_info_Callback(const image_process::robot_info msg)
     robot.yaw_body = msg.pose.theta;
     robot.yaw_field = robot.yaw_body + pos.yaw;
     robot.whole = msg.whole;
+    robot_stamp = ros::Time::now();
 }
 
 void ctrlBack_Callback(const flight_strategy::ctrlBack msg)
@@ -180,6 +183,17 @@ void ctrlBack_Callback(const flight_strategy::ctrlBack msg)
 	else
 		ctrl.flag_arrived = false;
 }
+
+// void catch_pos_Callback(const xxx::xxx msg)
+// {
+	
+// }
+
+// void robot_pos_Callback(const xxx::xxx msg)
+// {
+//		robot.pos_f[0] = msg.x;
+//		robot.pos_f[1] = msg.y;
+// }
 
 int main(int argc, char **argv)
 {
@@ -199,6 +213,8 @@ int main(int argc, char **argv)
 	ros::Subscriber nav_sub = n.subscribe("/ardrone/navdata", 1, navCallback);
 	ros::Subscriber altitude_sub = n.subscribe("/ardrone/navdata_altitude", 1, altitudeCallback);
 	ros::Subscriber yaw_sub = n.subscribe("/ardrone/yaw", 1, yawCallback);
+	//ros::Subscriber catch_pos_sub = n.subscribe("", 1, catch_pos_Callback);
+	//ros::Subscriber robot_pos_sub = n.subscribe("", 1, robot_pos_Callback);
 
 	ros::Rate loop_rate(LOOP_RATE);
 	std_msgs::Empty order;
@@ -228,23 +244,41 @@ int main(int argc, char **argv)
 			}
 			case STATE_LOCATING:{
 				static unsigned int loop_times = 0;
-
+				flight_strategy::ctrl ctrl_msg;
+				bool arrived_inaccurate = false;
 				if(flight.last_state != flight.state){
 					ROS_INFO("State LOCATING\n");
+					// ctrl_msg.enable = 1;
+					// ctrl_msg.mode = NORMAL_CTL;
+					// ctrl_msg.pos_sp[0] =  -1.95 - pos_update(0);
+					// ctrl_msg.pos_sp[1] =  0 - pos_update(1);
+					// ctrl_msg.pos_halt[0] = 0;
+					// ctrl_msg.pos_halt[1] = 0;
+					// ctrl_msg.pos_halt[2] = 1;
+					// ctrl_pub.publish(ctrl_msg);
 				}
 				flight.last_state = flight.state;
 				loop_times++;
 
-				flight_strategy::ctrl ctrl_msg;
-				ctrl_msg.enable = 1;
-				ctrl_msg.mode = IMAGE_CTL;
-				ctrl_msg.pos_sp[0] =  pos.pos_img(0);
-				ctrl_msg.pos_sp[1] =  pos.pos_img(1);
-				ctrl_msg.pos_halt[0] = 0;
-				ctrl_msg.pos_halt[1] = 0;
-				ctrl_msg.pos_halt[2] = 1;
-				ctrl_pub.publish(ctrl_msg);
-
+				if(!arrived_inaccurate)
+				{
+					if(ctrl.flag_arrived){
+						arrived_inaccurate = true;
+					} 	
+				}
+				
+				if(arrived_inaccurate)
+				{
+					ctrl_msg.enable = 1;
+					ctrl_msg.mode = IMAGE_CTL;
+					ctrl_msg.pos_sp[0] =  pos.pos_img(0);
+					ctrl_msg.pos_sp[1] =  pos.pos_img(1);
+					ctrl_msg.pos_halt[0] = 0;
+					ctrl_msg.pos_halt[1] = 0;
+					ctrl_msg.pos_halt[2] = 1;
+					ctrl_pub.publish(ctrl_msg);
+				}
+				
 				if(pos.self_located()){
 					ctrl.flag_arrived = false;
 					loop_times = 0;
@@ -307,20 +341,37 @@ int main(int argc, char **argv)
 				}
 				flight.last_state = flight.state;
 
-				flight_strategy::ctrl ctrl_msg;
-
-				ctrl_msg.enable = 1;
-				ctrl_msg.mode = IMAGE_CTL;
-				ctrl_msg.pos_sp[0] = robot.pos_b[0];
-				ctrl_msg.pos_sp[1] = robot.pos_b[1];
-				ctrl_msg.pos_halt[0] = 0;
-				ctrl_msg.pos_halt[1] = 0;
-				ctrl_msg.pos_halt[2] = 1;
-				ctrl_pub.publish(ctrl_msg);
+				ros::Duration dur;
+				dur = ros::Time::now() - robot_stamp;
+				if(dur.toSec() > 0.5){
+					flight_strategy::ctrl ctrl_msg;
+					ctrl_msg.enable = 1;
+					ctrl_msg.mode = NORMAL_CTL;
+					ctrl_msg.pos_halt[0] = 1;
+					ctrl_msg.pos_halt[1] = 1;
+					ctrl_msg.pos_halt[2] = 1;
+					ctrl_pub.publish(ctrl_msg);
+				}else{
+					flight_strategy::ctrl ctrl_msg;
+					ctrl_msg.enable = 1;
+					ctrl_msg.mode = IMAGE_CTL;
+					ctrl_msg.pos_sp[0] = robot.pos_b[0];
+					ctrl_msg.pos_sp[1] = robot.pos_b[1];
+					ctrl_msg.pos_halt[0] = 0;
+					ctrl_msg.pos_halt[1] = 0;
+					ctrl_msg.pos_halt[2] = 1;
+					ctrl_pub.publish(ctrl_msg);
+				}
+				
 				if(robot.whole){
 					//robot_at_desired_angle
 					if(fabs(robot.yaw_field) > 0 && fabs(robot.yaw_field) < 10){
 						flight.state = STATE_FLYING_AWAY;
+						// Update the position of the drone
+						// pos.pos_f(0) = robot.pos_f[0];
+						// pos.pos_f(1) = robot.pos_f[1];
+						// pos_update(0) = robot.pos_f[0];
+						// pos_update(0) = robot.pos_f[0];
 					}
 				}
 				break;
@@ -328,17 +379,20 @@ int main(int argc, char **argv)
 			case STATE_FLYING_AWAY:{
 				if(flight.last_state != flight.state){
 					ROS_INFO("State FLYING_AWAY\n");
+					flight.last_state = flight.state;
+					flight_strategy::ctrl ctrl_msg;
+					ctrl_msg.enable = 1;
+					ctrl_msg.mode = NORMAL_CTL;
+					ctrl_msg.pos_sp[0] = pos.pos_f(0) - 0.5;
+					ctrl_msg.pos_sp[1] = pos.pos_f(1);
+					ctrl_msg.pos_halt[0] = 0;
+					ctrl_msg.pos_halt[1] = 0;
+					ctrl_msg.pos_halt[2] = 1;
+					ctrl_pub.publish(ctrl_msg);
+					// Update the current position
+					// pos_update(0) = pos_update(0) - 0.5;
+					// pos_update(1) = pos_update(1) - 0.5;
 				}
-				flight.last_state = flight.state;
-
-				flight_strategy::ctrl ctrl_msg;
-				ctrl_msg.enable = 1;
-				ctrl_msg.mode = NORMAL_CTL;
-				ctrl_msg.pos_sp[2] = 2.0;
-				ctrl_msg.pos_halt[0] = 1;
-				ctrl_msg.pos_halt[1] = 1;
-				ctrl_msg.pos_halt[2] = 0;
-				ctrl_pub.publish(ctrl_msg);
 
 				if(ctrl.flag_arrived){
 					flight.state = STATE_LOCATING;
