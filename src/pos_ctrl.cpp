@@ -102,7 +102,7 @@ void drone_info_Callback(const image_process::drone_info msg)
 
 }
 
-bool inaccurate_control_1D(float pos_sp, float pos, float *vel_sp)
+bool inaccurate_control_1D(float pos_sp, float pos, float &vel_sp)
 {
 	float speed = 0.1;
 	bool is_arrived;
@@ -110,7 +110,7 @@ bool inaccurate_control_1D(float pos_sp, float pos, float *vel_sp)
 	float dist = fabs(err);
 	if(dist > 0.3){
 		float direction = err / dist;
-		*vel_sp = direction * speed;
+		vel_sp = direction * speed;
 		is_arrived = false;
 	}
 	else{
@@ -217,53 +217,47 @@ int main(int argc, char **argv)
 	flight_strategy::ctrlBack ctrlBack_msg;
 	while(ros::ok()){
 		if(ctrl.mode == 0){
-			// for(int i = 0 ; i < 3 ; i++){//xyz axis
-			// 	if(ctrl.pos_halt[i]){
-			// 		output.vel_sp[i] = 0;
-			// 		arrived = false;
-			// 	}
-			// 	else{
-			// 		float vel_sp_1D;
-			// 		arrived = inaccurate_control_1D(ctrl.pos_sp[i], raw_state.pos_f(i), &vel_sp_1D);
-			// 	//	ROS_INFO("SetPt: %f\nPos: %f\n", ctrl.pos_sp[i], raw_state.pos_f(i));
-
-			// 		if(arrived){
-			// 		//	ROS_INFO("arrived");
-			// 			output.vel_sp[i] = 0;
-			// 			ctrlBack_msg.arrived[i] = 1;
-			// 		}
-			// 		else{
-			// 			ctrlBack_msg.arrived[i] = 0;
-			// 			output.vel_sp[i] = vel_sp_1D;
-			// 		}
-			// 	}
-			// }
-			Vector2f vel_sp;
-			arrived = inaccurate_control_2D(ctrl.pos_sp, raw_state.pos_f, vel_sp);
-			if(arrived){
+			if(ctrl.pos_halt[0] || ctrl.pos_halt[1])
+			{
+				output.vel_sp[0] = 0;
+				output.vel_sp[1] = 0;
 				ctrlBack_msg.arrived[0] = 1;
 				ctrlBack_msg.arrived[1] = 1;
-				output.vel_sp(0) = 0;
-				output.vel_sp(1) = 0;
-			}
-			else{
-				ctrlBack_msg.arrived[0] = 0;
-				ctrlBack_msg.arrived[1] = 0;
-				output.vel_sp(0) = vel_sp(0);
-				output.vel_sp(1) = vel_sp(1);
-			}
+			}else{
+				Vector2f vel_sp;
+				arrived = inaccurate_control_2D(ctrl.pos_sp, raw_state.pos_f, vel_sp);
+				if(arrived){
+					ctrlBack_msg.arrived[0] = 1;
+					ctrlBack_msg.arrived[1] = 1;
+					output.vel_sp(0) = 0;
+					output.vel_sp(1) = 0;
+				}
+				else{
+					ctrlBack_msg.arrived[0] = 0;
+					ctrlBack_msg.arrived[1] = 0;
+					output.vel_sp(0) = vel_sp(0);
+					output.vel_sp(1) = vel_sp(1);
+				}
+			}	
 			//z
-			float vel_sp_1D;
-			alt_arrived = inaccurate_control_1D(ctrl.pos_sp(2), raw_state.pos_f(2), &vel_sp_1D);
-			if(alt_arrived){
-			//	ROS_INFO("arrived");
-				output.vel_sp(2) = 0;
+			if(ctrl.pos_halt[2])
+			{
+				output.vel_sp[2] = 0;
 				ctrlBack_msg.arrived[2] = 1;
-			}
-			else{
-				ctrlBack_msg.arrived[2] = 0;
-				output.vel_sp(2) = vel_sp_1D;
-			}
+			}else
+			{
+				float vel_sp_1D;
+				alt_arrived = inaccurate_control_1D(ctrl.pos_sp(2), raw_state.pos_f(2), vel_sp_1D);
+				if(alt_arrived){
+				//	ROS_INFO("arrived");
+					output.vel_sp(2) = 0;
+					ctrlBack_msg.arrived[2] = 1;
+				}
+				else{
+					ctrlBack_msg.arrived[2] = 0;
+					output.vel_sp(2) = vel_sp_1D;
+				}
+			}		
 		}
 		else if(ctrl.mode == 1){
 			Vector2f vel_sp;
