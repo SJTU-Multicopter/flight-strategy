@@ -226,20 +226,23 @@ int main(int argc, char **argv)
 			}
 			case STATE_LOCATING:{
 				static unsigned int loop_times = 0;
-				flight_strategy::ctrl ctrl_msg;
+
 				if(flight.last_state != flight.state){
 					ROS_INFO("State LOCATING\n");
-					
-					ctrl_msg.pos_sp[2] = pos.pos_f(2)+0.5;
-					ctrl_msg.pos_halt[0] = 1;
-					ctrl_msg.pos_halt[1] = 1;
-					ctrl_msg.pos_halt[2] = 0;
-					ctrl_msg.enable = 1;
-					ctrl_msg.mode = 0;
-					ctrl_pub.publish(ctrl_msg);
 				}
 				flight.last_state = flight.state;
 				loop_times++;
+
+				flight_strategy::ctrl ctrl_msg;
+				ctrl_msg.enable = 1;
+				ctrl_msg.mode = IMAGE_CTL;
+				ctrl_msg.pos_sp[0] =  pos.pos_img(0);
+				ctrl_msg.pos_sp[1] =  pos.pos_img(1);
+				ctrl_msg.pos_halt[0] = 0;
+				ctrl_msg.pos_halt[1] = 0;
+				ctrl_msg.pos_halt[2] = 1;
+				ctrl_pub.publish(ctrl_msg);
+
 				if(pos.self_located()){
 					ctrl.flag_arrived = false;
 					loop_times = 0;
@@ -316,18 +319,17 @@ int main(int argc, char **argv)
 			case STATE_FLYING_AWAY:{
 				if(flight.last_state != flight.state){
 					ROS_INFO("State FLYING_AWAY\n");
+					flight_strategy::ctrl ctrl_msg;
+					ctrl_msg.enable = 1;
+					ctrl_msg.mode = NORMAL_CTL;
+					ctrl_msg.pos_sp[0] = pos.pos_f(0)-0.5;
+					ctrl_msg.pos_halt[0] = 0;
+					ctrl_msg.pos_halt[1] = 1;
+					ctrl_msg.pos_halt[2] = 1;
+					ctrl_pub.publish(ctrl_msg);
 				}
 				flight.last_state = flight.state;
 
-				flight_strategy::ctrl ctrl_msg;
-				ctrl_msg.enable = 1;
-				ctrl_msg.mode = NORMAL_CTL;
-				ctrl_msg.pos_sp[2] = 2.0;
-				ctrl_msg.pos_halt[0] = 1;
-				ctrl_msg.pos_halt[1] = 1;
-				ctrl_msg.pos_halt[2] = 0;
-				ctrl_pub.publish(ctrl_msg);
-				
 				if(ctrl.flag_arrived){
 					flight.state = STATE_LOCATING;
 				}

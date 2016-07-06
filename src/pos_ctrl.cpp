@@ -144,7 +144,7 @@ bool accurate_control(const Vector2f& image_pos, Vector2f& vel_sp)
 	static Vector2f err_last;
 	static Vector2f err_int;
 	static bool new_start = true;
-	float P_pos = 0.00015, D_pos = 0.00007, I_pos = 0.00001;
+	float P_pos = 0.00012, D_pos = 0.00007, I_pos = 0.0;
 	Vector2f vel_sp_2d;
 	Vector2f image_center(320.0,180.0);
 	Vector2f image_pos_2d;
@@ -162,7 +162,6 @@ bool accurate_control(const Vector2f& image_pos, Vector2f& vel_sp)
 	
 	vel_sp(0) = -vel_sp_2d(1);
 	vel_sp(1) = -vel_sp_2d(0);
-	vel_sp(2) = 0;
 	vel_sp(0)=constrain_f(vel_sp(0), -0.08, 0.08);
 	vel_sp(1)=constrain_f(vel_sp(1), -0.08, 0.08);
 	
@@ -205,7 +204,10 @@ int main(int argc, char **argv)
 				else{
 					float vel_sp_1D;
 					arrived = inaccurate_control_1D(ctrl.pos_sp[i], raw_state.pos_f(i), vel_sp_1D);
+				//	ROS_INFO("SetPt: %f\nPos: %f\n", ctrl.pos_sp[i], raw_state.pos_f(i));
+
 					if(arrived){
+					//	ROS_INFO("arrived");
 						output.vel_sp[i] = 0;
 						ctrlBack_msg.arrived[i] = 1;
 					}
