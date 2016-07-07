@@ -14,7 +14,7 @@
 #include "image_process/drone_info.h"
 
 #define LOOP_RATE 20
-#define IMG_TOL 25
+#define IMG_TOL 50
 
 using namespace std;
 using namespace Eigen;
@@ -58,7 +58,11 @@ image_state img_state;
 control ctrl;// = {false, 0,{true,true,true},{0,0,0},false};
 output output;// = {{0,0,0}};
 int time_count = 0;
+int stop_count = 0;
 bool image_ctl_flag = false;
+int pulse_length = 0;
+Vector2f vel_ctl_direction;
+float vel_set_value;
 
 void ctrl_sp_callback(const flight_strategy::ctrl msg)
 {
@@ -71,6 +75,10 @@ void ctrl_sp_callback(const flight_strategy::ctrl msg)
 	}
 	ctrl.mode = msg.mode;
 	if(ctrl.mode == 1){
+		img_state.pos_b(0) = msg.pos_sp[0];
+		img_state.pos_b(1) = msg.pos_sp[1];
+	}
+	if(ctrl.mode == 2){
 		img_state.pos_b(0) = msg.pos_sp[0];
 		img_state.pos_b(1) = msg.pos_sp[1];
 	}
@@ -171,7 +179,7 @@ bool accurate_control(const Vector2f& image_pos, Vector2f& vel_sp)
 	static Vector2f err_last;
 	static Vector2f err_int;
 	static bool new_start = true;
-	float P_pos = 0.00012, D_pos = 0.00007, I_pos = 0.0;
+	float P_pos = 0.0008, D_pos = 0.01, I_pos = 0.00003;
 	Vector2f vel_sp_2d;
 	Vector2f image_center(320.0,180.0);
 	Vector2f image_pos_2d;
@@ -189,8 +197,8 @@ bool accurate_control(const Vector2f& image_pos, Vector2f& vel_sp)
 	
 	vel_sp(0) = -vel_sp_2d(1);
 	vel_sp(1) = -vel_sp_2d(0);
-	vel_sp(0)=constrain_f(vel_sp(0), -0.08, 0.08);
-	vel_sp(1)=constrain_f(vel_sp(1), -0.08, 0.08);
+	vel_sp(0)=constrain_f(vel_sp(0), -0.1, 0.1);
+	vel_sp(1)=constrain_f(vel_sp(1), -0.1, 0.1);
 	
 	bool is_arrived;
 	float dist = err.norm();
@@ -215,14 +223,15 @@ bool image_control(const Vector2f& image_pos, Vector2f& vel_sp, float& distance)
 	Vector2f err = image_pos_2d - image_center;
 	float dist = err.norm();
 	distance = dist;
-	vel_sp(0) = -err(0) / dist;
-	vel_sp(1) = -err(1) / dist;
+	vel_sp(0) = -err(1) / dist;
+	vel_sp(1) = -err(0) / dist;
 	if(dist > IMG_TOL){
 		is_arrived = false;
 	}
 	else{
 		is_arrived = true;
 	}
+	return is_arrived;
 }
 
 int main(int argc, char **argv)
@@ -252,6 +261,7 @@ int main(int argc, char **argv)
 				output.vel_sp(1) = 0;
 				ctrlBack_msg.arrived[0] = 1;
 				ctrlBack_msg.arrived[1] = 1;
+				ROS_INFO("STOP");
 			}else{
 				Vector2f vel_sp_f;
 				arrived = inaccurate_control_2D(ctrl.pos_sp, raw_state.pos_f, vel_sp_f);
@@ -307,9 +317,68 @@ int main(int argc, char **argv)
 		else if(ctrl.mode == 1){
 			Vector2f vel_sp_direction;
 			Vector2f vel_sp;
-			int pulse_length = 0;
+			
 			float distance;
 			arrived = image_control(img_state.pos_b, vel_sp_direction, distance);
+			
+			if(distance < 80){
+				vel_set_value = 0.1;
+			}else if (distance < 150){
+				vel_set_value = 0.3;
+			}
+			else{
+				vel_set_value = 0.5;
+			}
+			if(arrived){
+				ctrlBack_msg.arrived[0] = 1;
+				ctrlBack_msg.arrived[1] = 1;
+				output.vel_sp(0) = 0;
+				output.vel_sp(1) = 0;
+				output.vel_sp(2) = 0;
+				ROS_INFO("Arrived");
+				ctrlBack_msg.is_controlling = false;	
+			}
+			else{
+				vel_sp(0) = 0;
+				vel_sp(1) = 0;
+				if(!image_ctl_flag){
+					//pulse_length = distance / 40 + 1;
+					pulse_length = 3;
+					//if(pulse_length > 5)pulse_length = 5;
+					stop_count++;
+					if(stop_count > 2){
+						image_ctl_flag = true;
+						vel_ctl_direction = vel_sp_direction;
+						stop_count = 0;
+					}	
+					ctrlBack_msg.is_controlling = false;	
+					ROS_INFO("Stop Stop");
+				}else{
+					time_count++;
+					//ROS_INFO("time_count:%d",time_count);
+					//ROS_INFO("pulse_length:%d",pulse_length);
+					if(time_count > pulse_length){
+						time_count = 0;
+						vel_sp(0) = 0;
+						vel_sp(1) = 0;
+						image_ctl_flag = false;
+					}else{
+						vel_sp = vel_set_value * vel_ctl_direction;
+						ROS_INFO("OUT:%f   %f", vel_sp(0), vel_sp(1));
+					}	
+					ctrlBack_msg.is_controlling = true;				
+				}
+
+				ctrlBack_msg.arrived[0] = 0;
+				ctrlBack_msg.arrived[1] = 0;
+				output.vel_sp(0) = vel_sp(0);
+				output.vel_sp(1) = vel_sp(1);
+				output.vel_sp(2) = 0;
+			}
+		}
+		else if(ctrl.mode == 2){
+			Vector2f vel_sp;
+			arrived = accurate_control(img_state.pos_b, vel_sp);
 
 			if(arrived){
 				ctrlBack_msg.arrived[0] = 1;
@@ -319,23 +388,6 @@ int main(int argc, char **argv)
 				output.vel_sp(2) = 0;
 			}
 			else{
-				vel_sp(0) = 0;
-				vel_sp(1) = 0;
-				time_count++;
-				if(!image_ctl_flag){
-					pulse_length = distance / 36 + 1;
-					image_ctl_flag = true;
-				}else{
-					if(time_count > pulse_length){
-						time_count = 0;
-						vel_sp(0) = 0;
-						vel_sp(1) = 0;
-						image_ctl_flag = false;
-					}else{
-						vel_sp = 0.4 * vel_sp_direction;
-					}
-				}
-
 				ctrlBack_msg.arrived[0] = 0;
 				ctrlBack_msg.arrived[1] = 0;
 				output.vel_sp(0) = vel_sp(0);

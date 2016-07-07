@@ -59,8 +59,8 @@ void position::get_R_field_body(float yaw)
 
 bool position::self_located(void)
 {
-	if (fabs(pos_img(0) - 320)< 300){
-		if(fabs(pos_img(1) - 180)<160)
+	if (fabs(pos_img(0) - 320)< 25){
+		if(fabs(pos_img(1) - 180)<25)
 			return true;
 	}
 	return false;
@@ -100,6 +100,7 @@ ros::Publisher rawpos_b_pub;
 ros::Publisher rawpos_f_pub;
 ros::Time position_reset_stamp;
 ros::Time robot_stamp;
+bool is_controlling = false;
 
 void navCallback(const ardrone_autonomy::Navdata &msg)
 {
@@ -179,10 +180,10 @@ void ctrlBack_Callback(const flight_strategy::ctrlBack msg)
 {
 	if(msg.arrived[0]&&msg.arrived[1]&&msg.arrived[2]){
 		ctrl.flag_arrived = true;
-		ROS_INFO("all axis arrived(node strategy)");
 	}
 	else
 		ctrl.flag_arrived = false;
+	is_controlling = msg.is_controlling;
 }
 
 int main(int argc, char **argv)
@@ -325,14 +326,18 @@ int main(int argc, char **argv)
 
 				ros::Duration dur;
 				dur = ros::Time::now() - robot_stamp;
-				if(dur.toSec() > 0.5){
-					flight_strategy::ctrl ctrl_msg;
-					ctrl_msg.enable = 1;
-					ctrl_msg.mode = NORMAL_CTL;
-					ctrl_msg.pos_halt[0] = 1;
-					ctrl_msg.pos_halt[1] = 1;
-					ctrl_msg.pos_halt[2] = 1;
-					ctrl_pub.publish(ctrl_msg);
+				if(dur.toSec() > 0.2){
+					if(!is_controlling)
+					{
+						flight_strategy::ctrl ctrl_msg;
+						ctrl_msg.enable = 1;
+						ctrl_msg.mode = NORMAL_CTL;
+						ctrl_msg.pos_halt[0] = 1;
+						ctrl_msg.pos_halt[1] = 1;
+						ctrl_msg.pos_halt[2] = 1;
+						ctrl_pub.publish(ctrl_msg);
+						ROS_INFO("NO IMAGE");
+					}	
 				}else{
 					flight_strategy::ctrl ctrl_msg;
 					ctrl_msg.enable = 1;
@@ -340,13 +345,14 @@ int main(int argc, char **argv)
 					ctrl_msg.pos_sp[0] = robot.pos_b[0];
 					ctrl_msg.pos_sp[1] = robot.pos_b[1];
 					ctrl_pub.publish(ctrl_msg);
+
 				}
 
 				if(robot.whole){
 					//robot_at_desired_angle
-					if(fabs(robot.yaw_field) > 0 && fabs(robot.yaw_field) < 10){
-						flight.state = STATE_FLYING_AWAY;
-					}
+					// if(fabs(robot.yaw_field) > 0 && fabs(robot.yaw_field) < 10){
+					// 	flight.state = STATE_FLYING_AWAY;
+					// }
 				}
 				break;
 			}
