@@ -63,6 +63,7 @@ bool image_ctl_flag = false;
 int pulse_length = 0;
 Vector2f vel_ctl_direction;
 float vel_set_value;
+bool z_flag = false;
 
 void ctrl_sp_callback(const flight_strategy::ctrl msg)
 {
@@ -324,7 +325,7 @@ int main(int argc, char **argv)
 			if(distance < 80){
 				vel_set_value = 0.1;
 			}else if (distance < 150){
-				vel_set_value = 0.3;
+				vel_set_value = 0.4;
 			}
 			else{
 				vel_set_value = 0.5;
@@ -343,7 +344,7 @@ int main(int argc, char **argv)
 				vel_sp(1) = 0;
 				if(!image_ctl_flag){
 					//pulse_length = distance / 40 + 1;
-					pulse_length = 3;
+					pulse_length = 2;
 					//if(pulse_length > 5)pulse_length = 5;
 					stop_count++;
 					if(stop_count > 2){
@@ -364,7 +365,7 @@ int main(int argc, char **argv)
 						image_ctl_flag = false;
 					}else{
 						vel_sp = vel_set_value * vel_ctl_direction;
-						ROS_INFO("OUT:%f   %f", vel_sp(0), vel_sp(1));
+						
 					}	
 					ctrlBack_msg.is_controlling = true;				
 				}
@@ -374,6 +375,7 @@ int main(int argc, char **argv)
 				output.vel_sp(0) = vel_sp(0);
 				output.vel_sp(1) = vel_sp(1);
 				output.vel_sp(2) = 0;
+				
 			}
 		}
 		else if(ctrl.mode == 2){
@@ -400,6 +402,7 @@ int main(int argc, char **argv)
 		cmd.linear.x = output.vel_sp(0);
 		cmd.linear.y = output.vel_sp(1);
 		cmd.linear.z = output.vel_sp(2);
+		ROS_INFO("OUT:%f   %f", output.vel_sp(0), output.vel_sp(1));
 		cmd_pub.publish(cmd);
 		ros::spinOnce();
 		loop_rate.sleep();
