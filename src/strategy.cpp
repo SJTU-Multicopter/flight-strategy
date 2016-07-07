@@ -155,7 +155,7 @@ void altitudeCallback(const ardrone_autonomy::navdata_altitude &msg)
 //yaw corresponding to the field
 void yawCallback(const std_msgs::Float32 &msg)
 {
-	pos.yaw = msg.data;
+	pos.yaw = 0;
 }
 
 //circle position
@@ -326,7 +326,7 @@ int main(int argc, char **argv)
 
 				ros::Duration dur;
 				dur = ros::Time::now() - robot_stamp;
-				if(dur.toSec() > 0.2){
+				if(dur.toSec() > 0.1){
 					if(!is_controlling)
 					{
 						flight_strategy::ctrl ctrl_msg;
@@ -341,7 +341,7 @@ int main(int argc, char **argv)
 				}else{
 					flight_strategy::ctrl ctrl_msg;
 					ctrl_msg.enable = 1;
-					ctrl_msg.mode = IMAGE_CTL;
+					ctrl_msg.mode = 3;
 					ctrl_msg.pos_sp[0] = robot.pos_b[0];
 					ctrl_msg.pos_sp[1] = robot.pos_b[1];
 					ctrl_pub.publish(ctrl_msg);
@@ -350,9 +350,9 @@ int main(int argc, char **argv)
 
 				if(robot.whole){
 					//robot_at_desired_angle
-					// if(fabs(robot.yaw_field) > 0 && fabs(robot.yaw_field) < 10){
-					// 	flight.state = STATE_FLYING_AWAY;
-					// }
+					if(fabs(robot.yaw_body) > 0 && fabs(robot.yaw_body) < 10){
+						flight.state = STATE_FLYING_AWAY;
+					}
 				}
 				break;
 			}

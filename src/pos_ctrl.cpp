@@ -63,7 +63,11 @@ bool image_ctl_flag = false;
 int pulse_length = 0;
 Vector2f vel_ctl_direction;
 float vel_set_value;
-bool z_flag = false;
+bool x_arrived = false;
+bool y_arrived = false;
+bool x_arrived_l = false;
+bool y_arrived_l = false;
+Vector3f vel;
 
 void ctrl_sp_callback(const flight_strategy::ctrl msg)
 {
@@ -83,10 +87,14 @@ void ctrl_sp_callback(const flight_strategy::ctrl msg)
 		img_state.pos_b(0) = msg.pos_sp[0];
 		img_state.pos_b(1) = msg.pos_sp[1];
 	}
+	if(ctrl.mode == 3){
+		img_state.pos_b(0) = msg.pos_sp[0];
+		img_state.pos_b(1) = msg.pos_sp[1];
+	}
 }
 void yawCallback(const std_msgs::Float32 &msg)
 {
-	img_state.yaw = msg.data/57.3;
+	img_state.yaw = 0/57.3;
 }
 void odometryCallback(const nav_msgs::Odometry &msg)
 {
@@ -109,7 +117,9 @@ void rawpos_b_Callback(const geometry_msgs::PoseStamped &msg)
 
 void navCallback(const ardrone_autonomy::Navdata &msg)
 {
-	//img_state.yaw = msg.rotZ/57.3;
+	vel(0) = msg.vx/1000;
+	vel(1) = msg.vy/1000;
+	vel(2) = msg.vz/1000;
 }
 
 void drone_info_Callback(const image_process::drone_info msg)
@@ -175,42 +185,64 @@ bool inaccurate_control_3D(const Vector3f& pos_sp, const Vector3f& pos, Vector3f
 	return is_arrived;
 }
 
-bool accurate_control(const Vector2f& image_pos, Vector2f& vel_sp)
+bool accurate_control(const Vector2f& image_pos, Vector2f& vel_sp_out, bool& x_arrived, bool& y_arrived)
 {
 	static Vector2f err_last;
 	static Vector2f err_int;
 	static bool new_start = true;
-	float P_pos = 0.0008, D_pos = 0.01, I_pos = 0.00003;
+	float P_pos = 0.0025;
+	float P_vel = 0.12, D_vel = 0.002, I_vel = 0.0;
 	Vector2f vel_sp_2d;
+	Vector2f vel_2d;
 	Vector2f image_center(320.0,180.0);
 	Vector2f image_pos_2d;
 	image_pos_2d(0) = image_pos(0);
 	image_pos_2d(1) = image_pos(1);
-	Vector2f err = image_pos_2d - image_center;
+	Vector2f err_pos =  image_center - image_pos_2d;
+	Vector2f vel_sp;
+	vel_sp = err_pos * P_pos;
+	vel_sp(0)=constrain_f(vel_sp(0), -0.4, 0.4);
+	vel_sp(1)=constrain_f(vel_sp(1), -0.4, 0.4);
+	vel_2d(0) = vel(0);
+	vel_2d(1) = vel(1);
+	Vector2f err_vel = vel_sp - vel_2d;
+
 	if(new_start){
-		err_last = err;
+		err_last = err_vel;
 		err_int(0) = 0;
 		err_int(1) = 0;
 		new_start = false;
 	}
-	Vector2f err_d = (err - err_last) * LOOP_RATE;
-	vel_sp_2d = err * P_pos + err_d * D_pos + err_int * I_pos;
+	Vector2f err_d = (err_vel - err_last) * LOOP_RATE;
+	vel_sp_2d = err_vel * P_vel + err_d * D_vel + err_int * I_vel;
 	
-	vel_sp(0) = -vel_sp_2d(1);
-	vel_sp(1) = -vel_sp_2d(0);
-	vel_sp(0)=constrain_f(vel_sp(0), -0.1, 0.1);
-	vel_sp(1)=constrain_f(vel_sp(1), -0.1, 0.1);
+	vel_sp_out(0) = vel_sp_2d(1);
+	vel_sp_out(1) = vel_sp_2d(0);
+	vel_sp_out(0)=constrain_f(vel_sp_out(0), -0.1, 0.1);
+	vel_sp_out(1)=constrain_f(vel_sp_out(1), -0.1, 0.1);
 	
+	if(fabs(err_pos(0)) < IMG_TOL){
+		x_arrived = true;
+	}else{
+		x_arrived = false;
+	}
+
+	if(fabs(err_pos(1)) < IMG_TOL){
+		x_arrived = true;
+	}else{
+		x_arrived = false;
+	}
+
 	bool is_arrived;
-	float dist = err.norm();
+	float dist = err_pos.norm();
 	if(dist > IMG_TOL){
 		is_arrived = false;
 	}
 	else{
 		is_arrived = true;
 	}
-	err_last = err;
-	err_int += err / LOOP_RATE;
+	err_last = err_vel;
+	err_int += err_vel / LOOP_RATE;
 	return is_arrived;
 }
 
@@ -324,7 +356,9 @@ int main(int argc, char **argv)
 			
 			if(distance < 80){
 				vel_set_value = 0.1;
-			}else if (distance < 150){
+			}else if (distance < 120){
+				vel_set_value = 0.2;
+			}else if (distance < 200){
 				vel_set_value = 0.4;
 			}
 			else{
@@ -344,7 +378,7 @@ int main(int argc, char **argv)
 				vel_sp(1) = 0;
 				if(!image_ctl_flag){
 					//pulse_length = distance / 40 + 1;
-					pulse_length = 2;
+					pulse_length = 3;
 					//if(pulse_length > 5)pulse_length = 5;
 					stop_count++;
 					if(stop_count > 2){
@@ -380,7 +414,7 @@ int main(int argc, char **argv)
 		}
 		else if(ctrl.mode == 2){
 			Vector2f vel_sp;
-			arrived = accurate_control(img_state.pos_b, vel_sp);
+			arrived = accurate_control(img_state.pos_b, vel_sp, x_arrived, y_arrived);
 
 			if(arrived){
 				ctrlBack_msg.arrived[0] = 1;
@@ -394,6 +428,55 @@ int main(int argc, char **argv)
 				ctrlBack_msg.arrived[1] = 0;
 				output.vel_sp(0) = vel_sp(0);
 				output.vel_sp(1) = vel_sp(1);
+				output.vel_sp(2) = 0;
+			}
+		}
+		else if(ctrl.mode == 3){
+			Vector2f vel_sp;
+			x_arrived_l = x_arrived;
+			y_arrived_l = y_arrived;
+			arrived = accurate_control(img_state.pos_b, vel_sp, x_arrived, y_arrived);
+
+			if(arrived){
+				ctrlBack_msg.arrived[0] = 1;
+				ctrlBack_msg.arrived[1] = 1;
+				output.vel_sp(0) = 0;
+				output.vel_sp(1) = 0;
+				output.vel_sp(2) = 0;
+			}
+			else{
+				output.vel_sp(0) = vel_sp(0);
+				output.vel_sp(1) = vel_sp(1);
+
+				if(x_arrived && !x_arrived_l){
+					output.vel_sp(0) = 0;
+					output.vel_sp(1) = 0;
+					ROS_INFO("X && !X_L");
+				}
+				if(y_arrived && !y_arrived_l){
+					output.vel_sp(0) = 0;
+					output.vel_sp(1) = 0;
+					ROS_INFO("Y && !Y_L");
+				}
+				if(x_arrived && y_arrived)
+				{
+					output.vel_sp(0) = 0;
+					output.vel_sp(1) = 0;
+					ROS_INFO("X && Y");
+				}
+				if(x_arrived && x_arrived_l)
+				{
+					output.vel_sp(0) = 0;
+					ROS_INFO("X");
+				}
+				if(y_arrived && y_arrived_l)
+				{
+					output.vel_sp(0) = 0;
+					ROS_INFO("Y");
+				}
+				ctrlBack_msg.arrived[0] = 0;
+				ctrlBack_msg.arrived[1] = 0;
+				
 				output.vel_sp(2) = 0;
 			}
 		}
