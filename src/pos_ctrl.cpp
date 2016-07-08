@@ -190,8 +190,8 @@ bool accurate_P_PID(const Vector2f& image_pos, Vector2f& vel_sp_out, bool& x_arr
 	static Vector2f err_last;
 	static Vector2f err_int;
 	static bool new_start = true;
-	float P_pos = 0.0025;
-	float P_vel = 0.12, D_vel = 0.002, I_vel = 0.0;
+	float P_pos = 0.0022;
+	float P_vel = 0.12, D_vel = 0.008, I_vel = 0.003;
 	Vector2f vel_sp_2d;
 	Vector2f vel_2d;
 	Vector2f image_center(320.0,180.0);
