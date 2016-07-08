@@ -107,11 +107,11 @@ void drone_info_Callback(const image_process::drone_info msg)
 
 bool inaccurate_control_1D(float pos_sp, float pos, float &vel_sp)
 {
-	float speed = 0.1;
+	float speed = 0.5;
 	bool is_arrived;
 	float err = pos_sp - pos;
 	float dist = fabs(err);
-	if(dist > 0.3){
+	if(dist > 0.1){
 		float direction = err / dist;
 		vel_sp = direction * speed;
 		is_arrived = false;
@@ -123,7 +123,7 @@ bool inaccurate_control_1D(float pos_sp, float pos, float &vel_sp)
 }
 bool inaccurate_control_2D(const Vector3f& pos_sp, const Vector3f& pos, Vector2f& vel_sp)
 {
-	float speed = 0.1;
+	float speed = 0.2;
 	bool is_arrived;
 	Vector3f err3 = pos_sp - pos;
 	err3(2) = 0;
@@ -283,11 +283,24 @@ int main(int argc, char **argv)
 		}
 		else if(ctrl.mode == 1){
 			Vector2f vel_sp;
+			float vel_sp_1D;
+			
 			arrived = accurate_control(img_state.pos_b, vel_sp);
 
-			if(arrived){
+			if(ctrl.pos_halt[2])
+			{
+				output.vel_sp(2) = 0;
+				ctrlBack_msg.arrived[2] = 1;
+			}else
+			{
+				alt_arrived = inaccurate_control_1D(ctrl.pos_sp(2), raw_state.pos_f(2), vel_sp_1D);
+				output.vel_sp(2) = vel_sp_1D;
+			}
+
+			if(arrived && alt_arrived){
 				ctrlBack_msg.arrived[0] = 1;
 				ctrlBack_msg.arrived[1] = 1;
+				ctrlBack_msg.arrived[2] = 1;
 				output.vel_sp(0) = 0;
 				output.vel_sp(1) = 0;
 				output.vel_sp(2) = 0;
@@ -295,9 +308,9 @@ int main(int argc, char **argv)
 			else{
 				ctrlBack_msg.arrived[0] = 0;
 				ctrlBack_msg.arrived[1] = 0;
+				ctrlBack_msg.arrived[2] = 0;
 				output.vel_sp(0) = vel_sp(0);
 				output.vel_sp(1) = vel_sp(1);
-				output.vel_sp(2) = 0;
 			}
 		}
 		ctrlBack_pub.publish(ctrlBack_msg);

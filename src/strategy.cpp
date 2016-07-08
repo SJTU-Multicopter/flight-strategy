@@ -105,11 +105,13 @@ ros::Time robot_stamp;
 Vector2f pos_update;
 Vector2f catch_position;
 Vector2f catch_position_last;
+Vector2f position_sp_ctl;
 
 bool arrived_inaccurate = false;
 bool arrived_height = false;
 bool arrived_find = false;
 bool moving = false;
+bool self_located = false;
 
 void navCallback(const ardrone_autonomy::Navdata &msg)
 {
@@ -274,38 +276,31 @@ int main(int argc, char **argv)
 
 				if(flight.last_state != flight.state){
 					ROS_INFO("State LOCATING\n");
+					ctrl_msg.mode = NORMAL_CTL;
+					ctrl_msg.pos_sp[0] =  pos.pos_f(0) + (-1.95 - pos_update(0));
+					ctrl_msg.pos_sp[1] =  pos.pos_f(1) + (0 - pos_update(1));
+					position_sp_ctl(0) = ctrl_msg.pos_sp[0];
+					position_sp_ctl(1) = ctrl_msg.pos_sp[1];
+					ctrl_msg.pos_halt[0] = 0;
+					ctrl_msg.pos_halt[1] = 0;
+					ctrl_msg.pos_halt[2] = 1;
+					ctrl_pub.publish(ctrl_msg);
+
 				}
 				flight.last_state = flight.state;				
 
-				if(!arrived_height)
-				{
+				if(!arrived_inaccurate){
 					ctrl_msg.enable = 1;
 					ctrl_msg.mode = NORMAL_CTL;
-					ctrl_msg.pos_sp[2] = 2;
-					ctrl_msg.pos_halt[0] = 1;
-					ctrl_msg.pos_halt[1] = 1;
-					ctrl_msg.pos_halt[2] = 0;
-					ctrl_pub.publish(ctrl_msg);
-				}else if(!arrived_inaccurate){
-					ctrl_msg.enable = 1;
-					ctrl_msg.mode = NORMAL_CTL;
-					ctrl_msg.pos_sp[0] =  -1.95 - pos_update(0);
-					ctrl_msg.pos_sp[1] =  0 - pos_update(1);
+					ctrl_msg.pos_sp[0] =  position_sp_ctl(0);
+					ctrl_msg.pos_sp[1] =  position_sp_ctl(1);
 					ctrl_msg.pos_halt[0] = 0;
 					ctrl_msg.pos_halt[1] = 0;
 					ctrl_msg.pos_halt[2] = 1;
 					ctrl_pub.publish(ctrl_msg);
 				}
-
-				if(!arrived_height)
-				{
-					if(ctrl.flag_arrived){
-						arrived_height = true;
-						ROS_INFO("HEIGHT:2m");
-					} 	
-				}
 				
-				if(!arrived_inaccurate && arrived_height)
+				if(!arrived_inaccurate)
 				{
 					if(ctrl.flag_arrived){
 						arrived_inaccurate = true;
@@ -320,7 +315,7 @@ int main(int argc, char **argv)
 
 					if(dur.toSec() > 0.2){
 						loop_times++;
-						if(loop_times > 100){
+						if(loop_times > 120){
 							if(pos.pos_f(2) < 2.6){
 								ctrl_msg.pos_sp[2] = pos.pos_f(2) + 0.5;
 								ctrl_msg.pos_halt[0] = 1;
@@ -329,7 +324,7 @@ int main(int argc, char **argv)
 								ctrl_msg.enable = 1;
 								ctrl_msg.mode = 0;
 								ctrl_pub.publish(ctrl_msg);
-								ROS_INFO("HIGHER");
+								ROS_INFO("HIGHER:%f",ctrl_msg.pos_sp[2]);
 							}
 							
 							loop_times = 0;
@@ -373,10 +368,10 @@ int main(int argc, char **argv)
 				if(!arrived_height)
 				{
 					ctrl_msg.enable = 1;
-					ctrl_msg.mode = NORMAL_CTL;
+					ctrl_msg.mode = IMAGE_CTL;
 					ctrl_msg.pos_sp[2] = 1.5;
-					ctrl_msg.pos_halt[0] = 1;
-					ctrl_msg.pos_halt[1] = 1;
+					ctrl_msg.pos_halt[0] = 0;
+					ctrl_msg.pos_halt[1] = 0;
 					ctrl_msg.pos_halt[2] = 0;
 					ctrl_pub.publish(ctrl_msg);
 				}else{
@@ -397,6 +392,11 @@ int main(int argc, char **argv)
 				if(!arrived_height){
 					if(ctrl.flag_arrived){
 						arrived_height = true;
+						pos.pos_f(0) = -1.95;
+						pos.pos_f(1) = 0;
+						pos.pos_b = pos.R_field_body.transpose() * pos.pos_f;
+						pos_update(0) = -1.95;
+						pos_update(1) = 0;
 						ROS_INFO("HEIGHT:1.5m");
 					} 	
 				}
@@ -409,19 +409,51 @@ int main(int argc, char **argv)
 				}
 				flight.last_state = flight.state;
 				flight_strategy::ctrl ctrl_msg;
-				ros::Duration dur;
-				dur = ros::Time::now() - robot_stamp;
-				if(dur.toSec() < 0.2){
+				ros::Duration dur_r, dur_p;
+				dur_r = ros::Time::now() - robot_stamp;
+				dur_p = ros::Time::now() - position_reset_stamp;
+				if(dur_r.toSec() < 0.2){
 					flight.state = STATE_REVOLVING;
 					arrived_inaccurate = false;
+					self_located = false;
 					break;
 				}
+
+				if(dur_p.toSec() < 0.2){
+					ctrl_msg.enable = 1;
+					ctrl_msg.mode = IMAGE_CTL;
+					ctrl_msg.pos_sp[0] =  pos.pos_img(0); //blue point position
+					ctrl_msg.pos_sp[1] =  pos.pos_img(1);
+					ctrl_msg.pos_halt[0] = 0;
+					ctrl_msg.pos_halt[1] = 0;
+					ctrl_msg.pos_halt[2] = 1;
+					ctrl_pub.publish(ctrl_msg);
+					if(pos.self_located()){
+						ctrl_msg.enable = 1;
+						ctrl_msg.mode = NORMAL_CTL;
+						ctrl_msg.pos_halt[0] = 1;
+						ctrl_msg.pos_halt[1] = 1;
+						ctrl_msg.pos_halt[2] = 1;
+						ctrl_pub.publish(ctrl_msg);
+
+						pos.pos_f(0) = -1.95;
+						pos.pos_f(1) = 0;
+						pos.pos_b = pos.R_field_body.transpose() * pos.pos_f;
+						pos_update(0) = -1.95;
+						pos_update(1) = 0;
+						self_located = true;
+						ROS_INFO("self_located");
+					}
+				}else{
+					self_located = true;
+				}
+
 				if(moving) 
 				{
 					arrived_inaccurate = false;
 				}
 
-				if(!arrived_inaccurate)
+				if(!arrived_inaccurate && self_located)
 				{
 					ros::Duration dur_1;
 					dur_1 = ros::Time::now() - robot_stamp;
@@ -439,6 +471,7 @@ int main(int argc, char **argv)
 							ctrl_msg.pos_halt[1] = 0;
 							ctrl_msg.pos_halt[2] = 1;
 							ctrl_pub.publish(ctrl_msg);
+							ROS_INFO("FLY TO CATCH:%f   %f",catch_position(0),catch_position(1));
 						}else{
 							ctrl_msg.mode = NORMAL_CTL;
 							ctrl_msg.enable = 1;
@@ -446,10 +479,12 @@ int main(int argc, char **argv)
 							ctrl_msg.pos_halt[1] = 1;
 							ctrl_msg.pos_halt[2] = 1;
 							ctrl_pub.publish(ctrl_msg);
+							ROS_INFO("FLY TO CATCH 22222");
+
 						}	
 					}	
 					
-				}else{
+				}else if(arrived_inaccurate && self_located){
 					ros::Duration dur_2;
 					dur_2 = ros::Time::now() - robot_stamp;
 					if(dur_2.toSec() > 0.2){
@@ -462,8 +497,11 @@ int main(int argc, char **argv)
 						ctrl_pub.publish(ctrl_msg);
 					}else{
 						flight.state = STATE_REVOLVING;
+						self_located = false;
 						arrived_inaccurate = false;
+						break;
 					}
+					ROS_INFO("FLY TO CATCH, arrived_inaccurate");
 				}
 				if(!arrived_inaccurate){
 					if(ctrl.flag_arrived){
@@ -530,14 +568,14 @@ int main(int argc, char **argv)
 					flight_strategy::ctrl ctrl_msg;
 					ctrl_msg.enable = 1;
 					ctrl_msg.mode = NORMAL_CTL;
-					ctrl_msg.pos_sp[0] = pos.pos_f(0)-0.5;
+					ctrl_msg.pos_sp[0] = pos.pos_f(0)-1;
 					ctrl_msg.pos_sp[1] = pos.pos_f(1);
 					ctrl_msg.pos_halt[0] = 0;
 					ctrl_msg.pos_halt[1] = 0;
 					ctrl_msg.pos_halt[2] = 1;
 					ctrl_pub.publish(ctrl_msg);
 					// Update the current position
-					pos_update(0) = pos_update(0) - 0.5;
+					pos_update(0) = pos_update(0) - 1;
 					pos_update(1) = pos_update(1);
 				}
 
