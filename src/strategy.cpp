@@ -14,7 +14,7 @@
 #include "image_process/drone_info.h"
 #include "mavros/Ardrone.h"
 #define LOOP_RATE 20
-#define IMG_TOL 25
+#define IMG_TOL 40
 
 #define STATE_IDLE 0
 #define STATE_TAKEOFF 1
@@ -310,28 +310,27 @@ int main(int argc, char **argv)
 				
 				if(flight.last_state != flight.state){
 					ROS_INFO("State LOCATING\n");
-					ctrl_msg.mode = NORMAL_CTL;
-					ctrl_msg.pos_sp[0] =  pos.pos_f(0) + (-1.95 - pos_update(0));
-					ctrl_msg.pos_sp[1] =  pos.pos_f(1) + (0 - pos_update(1));
-					position_sp_ctl(0) = ctrl_msg.pos_sp[0];
-					position_sp_ctl(1) = ctrl_msg.pos_sp[1];
-					ROS_INFO("POSITION:%f   %f",pos.pos_f(0),pos.pos_f(1));
-					ROS_INFO("State LOCATING:%f   %f",position_sp_ctl(0),position_sp_ctl(1));
-					ctrl_msg.pos_halt[0] = 0;
-					ctrl_msg.pos_halt[1] = 0;
-					ctrl_msg.pos_halt[2] = 1;
-					ctrl_pub.publish(ctrl_msg);
-
+					// ctrl_msg.mode = NORMAL_CTL;
+					// ctrl_msg.pos_sp[0] =  pos.pos_f(0) + (-1.95 - pos_update(0));
+					// ctrl_msg.pos_sp[1] =  pos.pos_f(1) + (0 - pos_update(1));
+					// position_sp_ctl(0) = ctrl_msg.pos_sp[0];
+					// position_sp_ctl(1) = ctrl_msg.pos_sp[1];
+					// ROS_INFO("POSITION:%f   %f",pos.pos_f(0),pos.pos_f(1));
+					// ROS_INFO("State LOCATING:%f   %f",position_sp_ctl(0),position_sp_ctl(1));
+					// ctrl_msg.pos_halt[0] = 0;
+					// ctrl_msg.pos_halt[1] = 0;
+					// ctrl_msg.pos_halt[2] = 1;
+					// ctrl_pub.publish(ctrl_msg);
 				}
 				flight.last_state = flight.state;				
 
 				if(!arrived_inaccurate){
 					ctrl_msg.enable = 1;
 					ctrl_msg.mode = NORMAL_CTL;
-					ctrl_msg.pos_sp[0] =  position_sp_ctl(0);
-					ctrl_msg.pos_sp[1] =  position_sp_ctl(1);
+					ctrl_msg.pos_sp[0] =  -1.95;
+					ctrl_msg.pos_sp[1] =  0;
 					ROS_INFO("POSITION:%f   %f",pos.pos_f(0),pos.pos_f(1));
-					ROS_INFO("State LOCATING:%f   %f",position_sp_ctl(0),position_sp_ctl(1));
+					ROS_INFO("State LOCATING:%f   %f",ctrl_msg.pos_sp[0],ctrl_msg.pos_sp[1]);
 					ctrl_msg.pos_halt[0] = 0;
 					ctrl_msg.pos_halt[1] = 0;
 					ctrl_msg.pos_halt[2] = 1;
@@ -349,7 +348,7 @@ int main(int argc, char **argv)
 
 					if(dur.toSec() > 0.2){
 						loop_times++;
-						if(loop_times > 120){
+						if(loop_times > 100){
 							loop_times = 0;	
 							if(pos.pos_f(2) < 2.6){
 								ctrl_msg.pos_sp[2] = pos.pos_f(2) + 0.5;
@@ -359,9 +358,11 @@ int main(int argc, char **argv)
 								ctrl_msg.enable = 1;
 								ctrl_msg.mode = 0;
 								ctrl_pub.publish(ctrl_msg);
+
 								ROS_INFO("HIGHER:%f",ctrl_msg.pos_sp[2]);
 							}	
 						}
+						ROS_INFO("HEIGHT:%f",pos.pos_f(2));
 
 					}else{
 						ctrl_msg.enable = 1;
@@ -401,20 +402,60 @@ int main(int argc, char **argv)
 				if(!arrived_height)
 				{
 					ctrl_msg.enable = 1;
-					ctrl_msg.mode = 2;
+					ctrl_msg.mode = 3;
 					ctrl_msg.pos_sp[2] = 1.5;
 					ctrl_msg.pos_halt[0] = 0;
 					ctrl_msg.pos_halt[1] = 0;
 					ctrl_msg.pos_halt[2] = 0;
 					ctrl_pub.publish(ctrl_msg);
+					ROS_INFO("State STANDBY,Height%f",pos.pos_f(2));
 				}else{
-					if(catch_position(0) < -900){//locating_timeout()){
-						ctrl_msg.mode = NORMAL_CTL;
-						ctrl_msg.enable = 1;
-						ctrl_msg.pos_halt[0] = 1;
-						ctrl_msg.pos_halt[1] = 1;
-						ctrl_msg.pos_halt[2] = 1;
-						ctrl_pub.publish(ctrl_msg);
+					ros::Duration dur_r, dur_p;
+					dur_r = ros::Time::now() - robot_stamp;
+					dur_p = ros::Time::now() - position_reset_stamp;
+					if(dur_r.toSec() < 0.2){
+						flight.state = STATE_REVOLVING;
+						arrived_height = false;
+						break;
+					}
+					if(catch_position(0) < -900)
+					{
+						if(dur_p.toSec() < 0.2){
+							ROS_INFO("LOCATING");
+							ctrl_msg.enable = 1;
+							ctrl_msg.mode = 3;
+							ctrl_msg.pos_sp[0] =  pos.pos_img(0); //blue point position
+							ctrl_msg.pos_sp[1] =  pos.pos_img(1);
+							ctrl_msg.pos_halt[0] = 0;
+							ctrl_msg.pos_halt[1] = 0;
+							ctrl_msg.pos_halt[2] = 1;
+							ctrl_pub.publish(ctrl_msg);
+							if(pos.self_located()){
+								ctrl_msg.enable = 1;
+								ctrl_msg.mode = NORMAL_CTL;
+								ctrl_msg.pos_halt[0] = 1;
+								ctrl_msg.pos_halt[1] = 1;
+								ctrl_msg.pos_halt[2] = 1;
+								ctrl_pub.publish(ctrl_msg);
+
+								pos.pos_f(0) = -1.95;
+								pos.pos_f(1) = 0;
+								pos.pos_b = pos.R_field_body.transpose() * pos.pos_f;
+								pos_update(0) = -1.95;
+								pos_update(1) = 0;
+								self_located = true;
+								initial_located = true;
+								ROS_INFO("Self_located");
+							}
+						}else{
+							ctrl_msg.enable = 1;
+							ctrl_msg.mode = NORMAL_CTL;
+							ctrl_msg.pos_halt[0] = 1;
+							ctrl_msg.pos_halt[1] = 1;
+							ctrl_msg.pos_halt[2] = 1;
+							ctrl_pub.publish(ctrl_msg);
+							ROS_INFO("NO POINT");
+						}
 					}
 					else{//robot_coming()){
 						flight.state = STATE_FLYING_TO_CATCH;
@@ -425,11 +466,6 @@ int main(int argc, char **argv)
 				if(!arrived_height){
 					if(ctrl.flag_img_height_arrived){
 						arrived_height = true;
-						pos.pos_f(0) = -1.95;
-						pos.pos_f(1) = 0;
-						pos.pos_b = pos.R_field_body.transpose() * pos.pos_f;
-						pos_update(0) = -1.95;
-						pos_update(1) = 0;
 						ROS_INFO("HEIGHT:1.5m");
 					} 	
 				}
@@ -488,7 +524,7 @@ int main(int argc, char **argv)
 						ctrl_msg.pos_halt[2] = 1;
 						ctrl_pub.publish(ctrl_msg);
 						ROS_INFO("NO POINT");
-				}
+					}
 				}else{
 					if(moving) 
 					{
@@ -566,6 +602,7 @@ int main(int argc, char **argv)
 						pos.pos_b = pos.R_field_body.transpose() * pos.pos_f;
 						pos_update(0) = robot.pos_f[0];
 						pos_update(1) = robot.pos_f[1];
+						ROS_INFO("State REVOLVING, Position:%f   %f",pos.pos_f(0),pos.pos_f(1));
 						break;
 					}
 				}
@@ -593,10 +630,14 @@ int main(int argc, char **argv)
 					// Update the current position
 					pos_update(0) = pos_update(0) - 0.8;
 					pos_update(1) = pos_update(1);
+					
 				}
 
 				if(ctrl.flag_arrived){
 					flight.state = STATE_LOCATING;
+					ctrl.flag_arrived = false;
+					ROS_INFO("State FLYING_AWAY, UPDATE Position:%f   %f",pos_update(0),pos_update(1));
+					ROS_INFO("State FLYING_AWAY, Position:%f   %f",pos.pos_f(0),pos.pos_f(1));
 					break;
 				}
 				break;

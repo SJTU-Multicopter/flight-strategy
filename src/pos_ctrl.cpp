@@ -13,7 +13,7 @@
 #include "image_process/drone_info.h"
 
 #define LOOP_RATE 20
-#define IMG_TOL 25
+#define IMG_TOL 40
 
 using namespace std;
 using namespace Eigen;
