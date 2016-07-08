@@ -71,6 +71,8 @@ bool position::self_located(void)
 struct control
 {
 	bool flag_arrived;
+	bool flag_img_arrived;
+	bool flag_img_height_arrived;
 	int mode;
 	bool pos_halt[3];
 	float pos_sp[3];
@@ -94,7 +96,7 @@ struct robot
 };
 
 position pos;
-struct control ctrl={false, 0, {false,false,false},{0,0,0},false};
+struct control ctrl={false, false, false, 0, {false,false,false},{0,0,0},false};
 struct flight flight={5,0,0};
 struct robot robot={{0,0},{0,0},0,0,false};
 float altitude_sp;
@@ -112,14 +114,27 @@ bool arrived_height = false;
 bool arrived_find = false;
 bool moving = false;
 bool self_located = false;
+bool initial_located = false;
+bool predicting = false;
+int predicting_count = 0;
 
 void navCallback(const ardrone_autonomy::Navdata &msg)
 {
+	static bool start=true;
+	static float last_time = 0;
+	if(start){
+		start = false;
+		pos.pos_f(0) = -1.95;
+		pos.pos_f(1) = 0;
+		pos.pos_b(0) = -1.95;
+		pos.pos_b(1) = 0;
+		last_time = msg.tm;
+	}
 	geometry_msgs::PoseStamped rawpos_b;
 	geometry_msgs::PoseStamped rawpos_f;
 	Vector3f raw_v ;
 
-	static float last_time = 0;
+	
 	raw_v(0) = msg.vx;
 	raw_v(1) = msg.vy;
 	raw_v(2) = msg.vz;
@@ -193,6 +208,14 @@ void ctrlBack_Callback(const flight_strategy::ctrlBack msg)
 		ctrl.flag_arrived = true;
 	else
 		ctrl.flag_arrived = false;
+	if(msg.img_arrived[0]&&msg.img_arrived[1])
+		ctrl.flag_img_arrived = true;
+	else
+		ctrl.flag_img_arrived = false;
+	if(msg.img_arrived[2])
+		ctrl.flag_img_height_arrived = true;
+	else
+		ctrl.flag_img_height_arrived = false;
 }
 
 // void catch_pos_Callback(const xxx::xxx msg)
@@ -208,11 +231,24 @@ void robot_pos_Callback(const mavros::Ardrone msg)
 	catch_position_last(1) = catch_position(1);
 	catch_position(0) = msg.catch_x;
 	catch_position(1) = msg.catch_y;
-	if(fabs(catch_position_last(0) - catch_position(0)) < 0.0001 && fabs(catch_position_last(1) - catch_position(1)) < 0.0001)
-	{
+	if(catch_position(0) < -900 || (robot.pos_f[0] > 1.8 && robot.pos_f[0] < 2.2 && fabs(robot.pos_f[1]) < 0.5)){
 		moving = false;
 	}else{
-		moving = true;
+		if(fabs(catch_position_last(0) - catch_position(0)) < 0.0001 && fabs(catch_position_last(1) - catch_position(1)) < 0.0001)
+		{
+			moving = false;
+		}else{
+			moving = true;
+		}
+	}	
+	if(catch_position(0) < -900){
+		predicting_count++;
+		if(predicting_count > 3){
+			predicting_count = 0;
+			predicting = true;
+		}
+	}else{
+		predicting_count = 0;
 	}
 }
 
@@ -241,10 +277,9 @@ int main(int argc, char **argv)
 	ros::Rate loop_rate(LOOP_RATE);
 	std_msgs::Empty order;
 	//geometry_msgs::Twist cmd;
-	pos.pos_f(0) = -1.95;
-	pos.pos_f(1) = 0;
-	pos.pos_b(0) = -1.95;
-	pos.pos_b(1) = 0;
+
+	catch_position(0) = -1000;
+	catch_position(1) = -1000;
 
 	while(ros::ok())
 	{
@@ -273,7 +308,6 @@ int main(int argc, char **argv)
 				static unsigned int loop_times = 0;
 				flight_strategy::ctrl ctrl_msg;
 				
-
 				if(flight.last_state != flight.state){
 					ROS_INFO("State LOCATING\n");
 					ctrl_msg.mode = NORMAL_CTL;
@@ -281,6 +315,8 @@ int main(int argc, char **argv)
 					ctrl_msg.pos_sp[1] =  pos.pos_f(1) + (0 - pos_update(1));
 					position_sp_ctl(0) = ctrl_msg.pos_sp[0];
 					position_sp_ctl(1) = ctrl_msg.pos_sp[1];
+					ROS_INFO("POSITION:%f   %f",pos.pos_f(0),pos.pos_f(1));
+					ROS_INFO("State LOCATING:%f   %f",position_sp_ctl(0),position_sp_ctl(1));
 					ctrl_msg.pos_halt[0] = 0;
 					ctrl_msg.pos_halt[1] = 0;
 					ctrl_msg.pos_halt[2] = 1;
@@ -294,20 +330,18 @@ int main(int argc, char **argv)
 					ctrl_msg.mode = NORMAL_CTL;
 					ctrl_msg.pos_sp[0] =  position_sp_ctl(0);
 					ctrl_msg.pos_sp[1] =  position_sp_ctl(1);
+					ROS_INFO("POSITION:%f   %f",pos.pos_f(0),pos.pos_f(1));
+					ROS_INFO("State LOCATING:%f   %f",position_sp_ctl(0),position_sp_ctl(1));
 					ctrl_msg.pos_halt[0] = 0;
 					ctrl_msg.pos_halt[1] = 0;
 					ctrl_msg.pos_halt[2] = 1;
 					ctrl_pub.publish(ctrl_msg);
-				}
-				
-				if(!arrived_inaccurate)
-				{
 					if(ctrl.flag_arrived){
 						arrived_inaccurate = true;
 						ROS_INFO("POSITION RESET POSITION");
 					} 	
 				}
-				
+			
 				if(arrived_inaccurate)
 				{
 					ros::Duration dur;
@@ -316,6 +350,7 @@ int main(int argc, char **argv)
 					if(dur.toSec() > 0.2){
 						loop_times++;
 						if(loop_times > 120){
+							loop_times = 0;	
 							if(pos.pos_f(2) < 2.6){
 								ctrl_msg.pos_sp[2] = pos.pos_f(2) + 0.5;
 								ctrl_msg.pos_halt[0] = 1;
@@ -325,14 +360,12 @@ int main(int argc, char **argv)
 								ctrl_msg.mode = 0;
 								ctrl_pub.publish(ctrl_msg);
 								ROS_INFO("HIGHER:%f",ctrl_msg.pos_sp[2]);
-							}
-							
-							loop_times = 0;
+							}	
 						}
 
 					}else{
 						ctrl_msg.enable = 1;
-						ctrl_msg.mode = IMAGE_CTL;
+						ctrl_msg.mode = 3;
 						ctrl_msg.pos_sp[0] =  pos.pos_img(0); //blue point position???
 						ctrl_msg.pos_sp[1] =  pos.pos_img(1);
 						ctrl_msg.pos_halt[0] = 0;
@@ -368,7 +401,7 @@ int main(int argc, char **argv)
 				if(!arrived_height)
 				{
 					ctrl_msg.enable = 1;
-					ctrl_msg.mode = IMAGE_CTL;
+					ctrl_msg.mode = 2;
 					ctrl_msg.pos_sp[2] = 1.5;
 					ctrl_msg.pos_halt[0] = 0;
 					ctrl_msg.pos_halt[1] = 0;
@@ -390,7 +423,7 @@ int main(int argc, char **argv)
 					}
 				}
 				if(!arrived_height){
-					if(ctrl.flag_arrived){
+					if(ctrl.flag_img_height_arrived){
 						arrived_height = true;
 						pos.pos_f(0) = -1.95;
 						pos.pos_f(1) = 0;
@@ -419,94 +452,77 @@ int main(int argc, char **argv)
 					break;
 				}
 
-				if(dur_p.toSec() < 0.2){
-					ctrl_msg.enable = 1;
-					ctrl_msg.mode = IMAGE_CTL;
-					ctrl_msg.pos_sp[0] =  pos.pos_img(0); //blue point position
-					ctrl_msg.pos_sp[1] =  pos.pos_img(1);
-					ctrl_msg.pos_halt[0] = 0;
-					ctrl_msg.pos_halt[1] = 0;
-					ctrl_msg.pos_halt[2] = 1;
-					ctrl_pub.publish(ctrl_msg);
-					if(pos.self_located()){
+				if(catch_position(0) < -900){
+					if(dur_p.toSec() < 0.2){
+						ROS_INFO("LOCATING");
 						ctrl_msg.enable = 1;
-						ctrl_msg.mode = NORMAL_CTL;
-						ctrl_msg.pos_halt[0] = 1;
-						ctrl_msg.pos_halt[1] = 1;
+						ctrl_msg.mode = 3;
+						ctrl_msg.pos_sp[0] =  pos.pos_img(0); //blue point position
+						ctrl_msg.pos_sp[1] =  pos.pos_img(1);
+						ctrl_msg.pos_halt[0] = 0;
+						ctrl_msg.pos_halt[1] = 0;
 						ctrl_msg.pos_halt[2] = 1;
 						ctrl_pub.publish(ctrl_msg);
-
-						pos.pos_f(0) = -1.95;
-						pos.pos_f(1) = 0;
-						pos.pos_b = pos.R_field_body.transpose() * pos.pos_f;
-						pos_update(0) = -1.95;
-						pos_update(1) = 0;
-						self_located = true;
-						ROS_INFO("self_located");
-					}
-				}else{
-					self_located = true;
-				}
-
-				if(moving) 
-				{
-					arrived_inaccurate = false;
-				}
-
-				if(!arrived_inaccurate && self_located)
-				{
-					ros::Duration dur_1;
-					dur_1 = ros::Time::now() - robot_stamp;
-					if(dur_1.toSec() < 0.2){
-						flight.state = STATE_REVOLVING;
-						arrived_inaccurate = false;
-						break;
-					}else{
-						if(catch_position(0) > -900){
-							ctrl_msg.mode = NORMAL_CTL;
+						if(pos.self_located()){
 							ctrl_msg.enable = 1;
-							ctrl_msg.pos_sp[0] =  catch_position(0);
-							ctrl_msg.pos_sp[1] =  catch_position(1);
-							ctrl_msg.pos_halt[0] = 0;
-							ctrl_msg.pos_halt[1] = 0;
-							ctrl_msg.pos_halt[2] = 1;
-							ctrl_pub.publish(ctrl_msg);
-							ROS_INFO("FLY TO CATCH:%f   %f",catch_position(0),catch_position(1));
-						}else{
 							ctrl_msg.mode = NORMAL_CTL;
-							ctrl_msg.enable = 1;
 							ctrl_msg.pos_halt[0] = 1;
 							ctrl_msg.pos_halt[1] = 1;
 							ctrl_msg.pos_halt[2] = 1;
 							ctrl_pub.publish(ctrl_msg);
-							ROS_INFO("FLY TO CATCH 22222");
 
-						}	
-					}	
-					
-				}else if(arrived_inaccurate && self_located){
-					ros::Duration dur_2;
-					dur_2 = ros::Time::now() - robot_stamp;
-					if(dur_2.toSec() > 0.2){
-						flight_strategy::ctrl ctrl_msg;
+							pos.pos_f(0) = -1.95;
+							pos.pos_f(1) = 0;
+							pos.pos_b = pos.R_field_body.transpose() * pos.pos_f;
+							pos_update(0) = -1.95;
+							pos_update(1) = 0;
+							self_located = true;
+							initial_located = true;
+							ROS_INFO("Self_located");
+						}
+					}else{
 						ctrl_msg.enable = 1;
 						ctrl_msg.mode = NORMAL_CTL;
 						ctrl_msg.pos_halt[0] = 1;
 						ctrl_msg.pos_halt[1] = 1;
 						ctrl_msg.pos_halt[2] = 1;
 						ctrl_pub.publish(ctrl_msg);
-					}else{
-						flight.state = STATE_REVOLVING;
-						self_located = false;
-						arrived_inaccurate = false;
-						break;
-					}
-					ROS_INFO("FLY TO CATCH, arrived_inaccurate");
+						ROS_INFO("NO POINT");
 				}
-				if(!arrived_inaccurate){
-					if(ctrl.flag_arrived){
-						arrived_inaccurate = true;
-					} 
+				}else{
+					if(moving) 
+					{
+						arrived_inaccurate = false;
+					}
+
+					if(!arrived_inaccurate){
+						ctrl_msg.mode = NORMAL_CTL;
+						ctrl_msg.enable = 1;
+						ctrl_msg.pos_sp[0] =  catch_position(0);
+						ctrl_msg.pos_sp[1] =  catch_position(1);
+						ctrl_msg.pos_halt[0] = 0;
+						ctrl_msg.pos_halt[1] = 0;
+						ctrl_msg.pos_halt[2] = 1;
+						ctrl_pub.publish(ctrl_msg);
+						ROS_INFO("POSITION:%f   %f",pos.pos_f(0),pos.pos_f(1));
+						ROS_INFO("FLY TO CATCH:%f   %f",catch_position(0),catch_position(1));
+
+
+						if(!arrived_inaccurate){
+							if(ctrl.flag_arrived){
+								arrived_inaccurate = true;
+								ROS_INFO("FLY TO CATCH, arrived");
+							} 
+						}
+					}else{
+						ctrl_msg.enable = 1;
+						ctrl_msg.mode = NORMAL_CTL;
+						ctrl_msg.pos_halt[0] = 1;
+						ctrl_msg.pos_halt[1] = 1;
+						ctrl_msg.pos_halt[2] = 1;
+						ctrl_pub.publish(ctrl_msg);
+						ROS_INFO("WAITING");
+					}	
 				}
 
 				break;
@@ -530,7 +546,7 @@ int main(int argc, char **argv)
 				}else{
 					flight_strategy::ctrl ctrl_msg;
 					ctrl_msg.enable = 1;
-					ctrl_msg.mode = IMAGE_CTL;
+					ctrl_msg.mode = 2;
 					ctrl_msg.pos_sp[0] = robot.pos_b[0];
 					ctrl_msg.pos_sp[1] = robot.pos_b[1];
 					ctrl_msg.pos_halt[0] = 0;
@@ -568,14 +584,14 @@ int main(int argc, char **argv)
 					flight_strategy::ctrl ctrl_msg;
 					ctrl_msg.enable = 1;
 					ctrl_msg.mode = NORMAL_CTL;
-					ctrl_msg.pos_sp[0] = pos.pos_f(0)-1;
+					ctrl_msg.pos_sp[0] = pos.pos_f(0)-0.8;
 					ctrl_msg.pos_sp[1] = pos.pos_f(1);
 					ctrl_msg.pos_halt[0] = 0;
 					ctrl_msg.pos_halt[1] = 0;
 					ctrl_msg.pos_halt[2] = 1;
 					ctrl_pub.publish(ctrl_msg);
 					// Update the current position
-					pos_update(0) = pos_update(0) - 1;
+					pos_update(0) = pos_update(0) - 0.8;
 					pos_update(1) = pos_update(1);
 				}
 
