@@ -185,7 +185,7 @@ bool inaccurate_control_3D(const Vector3f& pos_sp, const Vector3f& pos, Vector3f
 	return is_arrived;
 }
 
-bool accurate_control(const Vector2f& image_pos, Vector2f& vel_sp_out, bool& x_arrived, bool& y_arrived)
+bool accurate_P_PID(const Vector2f& image_pos, Vector2f& vel_sp_out, bool& x_arrived, bool& y_arrived)
 {
 	static Vector2f err_last;
 	static Vector2f err_int;
@@ -228,9 +228,9 @@ bool accurate_control(const Vector2f& image_pos, Vector2f& vel_sp_out, bool& x_a
 	}
 
 	if(fabs(err_pos(1)) < IMG_TOL){
-		x_arrived = true;
+		y_arrived = true;
 	}else{
-		x_arrived = false;
+		y_arrived = false;
 	}
 
 	bool is_arrived;
@@ -245,7 +245,55 @@ bool accurate_control(const Vector2f& image_pos, Vector2f& vel_sp_out, bool& x_a
 	err_int += err_vel / LOOP_RATE;
 	return is_arrived;
 }
+bool accurate_PID(const Vector2f& image_pos, Vector2f& vel_sp_out, bool& x_arrived, bool& y_arrived)
+{
+	static Vector2f err_last;
+	static Vector2f err_int;
+	static bool new_start = true;
+	float P_pos = 0.00012, D_pos = 0.00007, I_pos = 0.0;
+	Vector2f vel_sp_2d;
+	Vector2f image_center(320.0,180.0);
+	Vector2f image_pos_2d;
+	image_pos_2d(0) = image_pos(0);
+	image_pos_2d(1) = image_pos(1);
+	Vector2f err = image_pos_2d - image_center;
+	if(new_start){
+	err_last = err;
+	err_int(0) = 0;
+	err_int(1) = 0;
+	new_start = false;
+	}
+	Vector2f err_d = (err - err_last) * LOOP_RATE;
+	vel_sp_2d = err * P_pos + err_d * D_pos + err_int * I_pos;
+	vel_sp_out(0) = -vel_sp_2d(1);
+	vel_sp_out(1) = -vel_sp_2d(0);
+	vel_sp_out(0)=constrain_f(vel_sp_out(0), -0.08, 0.08);
+	vel_sp_out(1)=constrain_f(vel_sp_out(1), -0.08, 0.08);
 
+	if(fabs(err(0)) < IMG_TOL){
+		x_arrived = true;
+	}else{
+		x_arrived = false;
+	}
+
+	if(fabs(err(1)) < IMG_TOL){
+		y_arrived = true;
+	}else{
+		y_arrived = false;
+	}
+
+	bool is_arrived;
+	float dist = err.norm();
+	if(dist > IMG_TOL){
+	is_arrived = false;
+	}
+	else{
+	is_arrived = true;
+	}
+	err_last = err;
+	err_int += err / LOOP_RATE;
+	return is_arrived;
+}
 bool image_control(const Vector2f& image_pos, Vector2f& vel_sp, float& distance)
 {
 	bool is_arrived;
@@ -414,7 +462,7 @@ int main(int argc, char **argv)
 		}
 		else if(ctrl.mode == 2){
 			Vector2f vel_sp;
-			arrived = accurate_control(img_state.pos_b, vel_sp, x_arrived, y_arrived);
+			arrived = accurate_P_PID(img_state.pos_b, vel_sp, x_arrived, y_arrived);
 
 			if(arrived){
 				ctrlBack_msg.arrived[0] = 1;
@@ -435,7 +483,7 @@ int main(int argc, char **argv)
 			Vector2f vel_sp;
 			x_arrived_l = x_arrived;
 			y_arrived_l = y_arrived;
-			arrived = accurate_control(img_state.pos_b, vel_sp, x_arrived, y_arrived);
+			arrived = accurate_P_PID(img_state.pos_b, vel_sp, x_arrived, y_arrived);
 
 			if(arrived){
 				ctrlBack_msg.arrived[0] = 1;
