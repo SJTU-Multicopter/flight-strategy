@@ -157,7 +157,7 @@ bool inaccurate_control_2D(const Vector3f& pos_sp, const Vector3f& pos, Vector2f
 	err(0) = err3(0);
 	err(1) = err3(1);
 	float dist = err.norm();
-	if(dist > 0.3){
+	if(dist > 0.5){
 		Vector2f direction = err / dist;
 		vel_sp = direction * speed;
 
@@ -549,22 +549,21 @@ int main(int argc, char **argv)
 			{
 				alt_arrived = inaccurate_control_1D(ctrl.pos_sp(2), raw_state.pos_f(2), vel_sp_1D);
 				output.vel_sp(2) = vel_sp_1D;
+				if(alt_arrived)
+					ctrlBack_msg.img_arrived[2] = 1;
+				else
+					ctrlBack_msg.img_arrived[2] = 0;
 			}
-			if(alt_arrived)
-				ctrlBack_msg.img_arrived[2] = 1;
-			else
-				ctrlBack_msg.img_arrived[2] = 0;
-
 			
 			if(distance < 80){
 				vel_set_value = 0.1;
 			}else if (distance < 120){
-				vel_set_value = 0.2;
+				vel_set_value = 0.25;
 			}else if (distance < 200){
-				vel_set_value = 0.3;
+				vel_set_value = 0.4;
 			}
 			else{
-				vel_set_value = 0.4;
+				vel_set_value = 0.5;
 			}
 			if(arrived && alt_arrived){
 				ctrlBack_msg.img_arrived[0] = 1;
